@@ -53,3 +53,18 @@ def test_output_quantile_summaries(processed, cfg):
     assert np.allclose(out[(4, 50)].loc["normal_1", [f"{c}_{f}" for f in csv.index for c in csv.columns]], csv.values.ravel())
     x = np.stack([e["signal"] for e in epochs(processed.iloc[:1], 4, 50, cfg["p3_epoching"])])
     assert csv.loc["C3_kurtosis", "q90"] == pytest.approx(np.percentile(kurtosis(x[:, 1], axis=-1), 90))
+
+
+def test_toggles(processed, cfg):  # whole classes and single features switch off from the config
+    p4 = cfg["p4_features"]
+    cfg["p3_epoching"]["combinations"] = [(4, 0)]
+    p4["processes"], p4["wavelet"]["enabled"], p4["asymmetry"]["enabled"] = 1, False, False
+    p4["shape"]["features"]["entropy"] = False
+    p4["welch"]["features"].update(ratio=False, slope=False)
+    res = Features(cfg).output(**Epoching(cfg).output(processed=processed))
+    assert "asymmetry_features" not in res
+    shape, welch = res["features"][(4, 0)], res["welch_features"][(4, 0)]
+    assert not any("entropy" in c for c in shape.columns) and shape.shape[1] == len(CH) * 2 * len(p4["quantiles"])
+    assert not any(c.endswith(("_ratio", "_slope")) for c in welch.columns) and welch.shape[1] == len(CH) * 6 * len(p4["quantiles"])
+    cd = combo_dir(p4["out_dirs"][p0.Dataset.ARCHIVE], 4, 0)
+    assert not list(cd.glob("*.png")) and not list(cd.glob("*_bsi.csv"))

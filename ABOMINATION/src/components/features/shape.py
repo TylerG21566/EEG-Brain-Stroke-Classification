@@ -16,13 +16,14 @@ def epoch_features(x, bins, clip): # (n_epochs, channels, win) -> (n_epochs, cha
 class ShapeFeatures: # skew, kurtosis, histogram entropy per channel -> 3 × channels per epoch
     suffix = "" # csv: <sid>.csv
 
-    def __init__(self, opts): # opts = config["p4_features"]
-        self.bins = opts["entropy_bins"]
+    def __init__(self, opts): # opts = config["p4_features"]; reads opts["shape"]
+        s, on = opts["shape"], opts["shape"].get("features", {})
+        self.bins, self.on = s["entropy_bins"], [k for k in FEATURES if on.get(k, True)] # toggled-off features are dropped
 
     def names(self, channels): # e.g. F4_kurtosis
-        return [f"{ch}_{k}" for ch in channels for k in FEATURES]
+        return [f"{ch}_{k}" for ch in channels for k in self.on]
 
-    def compute(self, x, sfreq, clip): # (n_epochs, channels, win) -> (n_epochs, 3 × channels); sfreq unused
+    def compute(self, x, sfreq, clip): # (n_epochs, channels, win) -> (n_epochs, enabled × channels); sfreq unused
         if not len(x):
-            return np.empty((0, x.shape[1] * len(FEATURES)))
-        return epoch_features(x, self.bins, clip).reshape(len(x), -1)
+            return np.empty((0, x.shape[1] * len(self.on)))
+        return epoch_features(x, self.bins, clip)[..., [FEATURES.index(k) for k in self.on]].reshape(len(x), -1)

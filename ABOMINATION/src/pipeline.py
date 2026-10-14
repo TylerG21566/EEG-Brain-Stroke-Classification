@@ -1,4 +1,4 @@
-import time
+import argparse, time
 import numpy as np
 import pandas as pd
 from components.base import PipelineStep, load_config
@@ -24,23 +24,41 @@ class Show(PipelineStep):
 
 config = load_config()
 
-Registered_pipelines: list[PipelineStep] = [
-    SanityStep(config),
-    DataFormat(config),
-    SampleProcessing(config),
-    Show(config),
-    Epoching(config), # lazy: hands p4 one task per subject
-    Features(config), # each task runs every (duration, overlap) in config["p3_epoching"]["combinations"]
-]
+# stage number -> its steps; the number matches the pN_ file (0 = sanity check). --start / --end pick a range
+Registered_pipelines: dict[int, list[PipelineStep]] = {
+    0: [SanityStep(config)],
+    1: [DataFormat(config)],
+    2: [SampleProcessing(config), Show(config)],
+    3: [Epoching(config)], # lazy: hands p4 one task per subject
+    4: [Features(config)], # each task runs every (duration, overlap) in config["p3_epoching"]["combinations"]
+}
+STARTABLE = {0} # stages a run may start from; later stages need earlier outputs in memory (add e.g. 5 once training can load p4's CSVs)
 
-def main():
+def stage_range(argv=None): # parse and check --start / --end -> (start, end)
+    last = max(Registered_pipelines)
+    ap = argparse.ArgumentParser(description="Run pipeline stages start..end (inclusive).")
+    ap.add_argument("-s", "--start", type=int, default=0, help=f"first stage, one of {sorted(STARTABLE)} (default 0)")
+    ap.add_argument("-e", "--end", type=int, default=last, help=f"last stage, 0-{last} (default {last})")
+    a = ap.parse_args(argv)
+    if a.end not in Registered_pipelines:
+        ap.error(f"--end {a.end} is not a stage; stages are {sorted(Registered_pipelines)}")
+    if a.start not in STARTABLE:
+        ap.error(f"--start {a.start} is not allowed; can start from {sorted(STARTABLE)}")
+    if a.start > a.end:
+        ap.error(f"--start {a.start} is after --end {a.end}")
+    return a.start, a.end
+
+def main(argv=None):
+    start, end = stage_range(argv)
     layer = {}
-    start = time.perf_counter()
-    for step in Registered_pipelines:
-        t = time.perf_counter()
-        layer = step.output(**layer)
-        print(f"[{type(step).__name__}] done in {time.perf_counter() - t:.2f} s", flush=True) # p3 is lazy, so ~0 s; its work is timed inside p4
-    print(f"[pipeline] total {time.perf_counter() - start:.2f} s")
+    t0 = time.perf_counter()
+    print(f"[pipeline] stages {start}-{end}", flush=True)
+    for n in range(start, end + 1):
+        for step in Registered_pipelines[n]:
+            t = time.perf_counter()
+            layer = step.output(**layer)
+            print(f"[{n} {type(step).__name__}] done in {time.perf_counter() - t:.2f} s", flush=True) # p3 is lazy, so ~0 s; its work is timed inside p4
+    print(f"[pipeline] total {time.perf_counter() - t0:.2f} s")
 
 if __name__ == "__main__":
     main()

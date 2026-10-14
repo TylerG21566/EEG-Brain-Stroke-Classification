@@ -12,11 +12,15 @@ class WelchFeatures: # Welch PSD per channel -> relative band power + pairwise b
         self.bands, self.window, self.max_s, self.min_n = dict(w["bands"]), w["window"], w["max_nperseg_s"], w["min_nperseg"]
         self.slow, self.fast = [list(self.bands).index(b) for b in w["slow"]], [list(self.bands).index(b) for b in w["fast"]]
         self.pairs = list(combinations(range(len(self.bands)), 2)) # a < b in band order
+        on = w.get("features", {}) # toggles: rel, ratio, dtabr, spec_mean, slope (missing = on)
+        kinds = ["rel"] * len(self.bands) + ["ratio"] * len(self.pairs) + EXTRA # per-channel column kinds, in compute order
+        self.cols = [i for i, k in enumerate(kinds) if on.get(k, True)]
         self.fmin, self.fmax = min(lo for lo, _ in self.bands.values()), max(hi for _, hi in self.bands.values()) # 1-30 Hz
 
-    def names(self, channels): # per channel: rel for each band, each pairwise ratio, then EXTRA (4 bands -> 13)
+    def names(self, channels): # per channel: rel for each band, each pairwise ratio, then EXTRA (4 bands -> 13), minus toggled-off ones
         b = list(self.bands)
-        return [n for ch in channels for n in [f"{ch}_{k}_rel" for k in b] + [f"{ch}_{b[i]}_{b[j]}_ratio" for i, j in self.pairs] + [f"{ch}_{e}" for e in EXTRA]]
+        per = lambda ch: [f"{ch}_{k}_rel" for k in b] + [f"{ch}_{b[i]}_{b[j]}_ratio" for i, j in self.pairs] + [f"{ch}_{e}" for e in EXTRA]
+        return [n for ch in channels for n in np.array(per(ch))[self.cols].tolist()]
 
     def psd(self, x, sfreq): # (n, ch, win) -> freqs, (n, ch, freqs) limited to [fmin, fmax); one vectorised call
         win = x.shape[-1]
@@ -25,11 +29,11 @@ class WelchFeatures: # Welch PSD per channel -> relative band power + pairwise b
         keep = (f >= self.fmin) & (f < self.fmax)
         return f[keep], p[..., keep]
 
-    def compute(self, x, sfreq, clip): # (n, ch, win) -> (n, ch * (bands + pairs + 3)); clip is unused
+    def compute(self, x, sfreq, clip): # (n, ch, win) -> (n, ch * enabled columns); clip is unused
         n, ch, _ = x.shape
-        k = len(self.bands) + len(self.pairs) + len(EXTRA)
-        if n == 0:
-            return np.empty((0, ch * k))
+        k = len(self.cols)
+        if n == 0 or k == 0:
+            return np.empty((n, ch * k))
         f, psd = self.psd(x, sfreq)
         bp = np.stack([psd[..., (f >= lo) & (f < hi)].sum(-1) for lo, hi in self.bands.values()], axis=-1) # (n, ch, bands)
         i, j = np.array(self.pairs).T
@@ -40,4 +44,4 @@ class WelchFeatures: # Welch PSD per channel -> relative band power + pairwise b
             spec_mean = (psd * f).sum(-1) / psd.sum(-1) # power-weighted mean frequency (Hz)
         slope = ((lf - lf.mean()) * (lp - lp.mean(-1, keepdims=True))).sum(-1) / ((lf - lf.mean()) ** 2).sum()
         extra = np.stack([dtabr, spec_mean, slope], axis=-1)
-        return np.nan_to_num(np.concatenate([rel, ratio, extra], axis=-1)).reshape(n, ch * k)
+        return np.nan_to_num(np.concatenate([rel, ratio, extra], axis=-1))[..., self.cols].reshape(n, ch * k)
