@@ -2,7 +2,7 @@ import types
 from pathlib import Path
 import numpy as np, pandas as pd, pytest
 import components.p0_pipeline_config as p0
-from components.p3_epoching import Epoching, combo_dir, epoch_name, epochs, subject_epochs
+from components.p3_epoching import Epoching, combo_dir, epoch_name, epochs
 
 SFREQ, CH = 250.0, ["FP1", "C3", "O1", "O2"]
 SPIKE = (1, 1234)  # (channel, sample): lands in epoch 1 for 4 s / 0 %
@@ -71,20 +71,19 @@ def test_names():
 
 def test_output_lazy_and_debug_files(processed, cfg, opts):
     out_dir = Path(opts["out_dirs"][p0.Dataset.ARCHIVE])
-    out = Epoching(cfg).output(processed=processed, duration=10, overlap=50, extra=1)  # debug off: nothing written
+    out = Epoching(cfg).output(processed=processed, extra=1)  # debug off: nothing written
     assert isinstance(out["subjects"], types.GeneratorType) and out["extra"] == 1 and out["processed"] is processed
-    tasks = list(out["subjects"])  # one small task per subject, expanded by p4's workers
+    tasks = list(out["subjects"])  # one small task per subject covering every combination; p4's workers run them
     assert [t["row"]["subject_id"] for t in tasks] == ["ischemic_5", "ischemic_6"]
-    assert sum(1 for t in tasks for _ in subject_epochs(**t)) == 39 and not out_dir.exists()
+    assert all(t["combinations"] == opts["combinations"] and t["out"] is None for t in tasks) and not out_dir.exists()
 
-    opts["debug"] = True
-    combo = combo_dir(out_dir, 10, 50)
+    combo = combo_dir(out_dir, 10, 50)  # debug: epochs() writes one .npy per epoch after clearing stale ones
     combo.mkdir(parents=True)
     (combo / "stale.npy").write_bytes(b"stale")
     (combo / "keep.txt").write_text("x")
-    gen = Epoching(cfg).output(processed=processed, duration=10, overlap=50)["subjects"]
+    gen = epochs(processed, 10, 50, opts, out_dir)
     assert (combo / "stale.npy").exists()  # lazy: nothing happens until iterated
-    eps = [e for t in gen for e in subject_epochs(**t)]
+    eps = list(gen)
     files = sorted(combo.glob("*.npy"))
     assert [f.name for f in files] == sorted(f"{epoch_name(e)}.npy" for e in eps) and (combo / "keep.txt").exists()
     assert files[0].name == "ischemic_5_e0000_t0000.00s.npy" and np.array_equal(np.load(files[0]), eps[0]["signal"])

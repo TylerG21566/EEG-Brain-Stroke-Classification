@@ -8,16 +8,15 @@ Run from `ABOMINATION/` with the venv set up (see the top-level README).
 .venv/bin/python src/pipeline.py
 ```
 
-Two step lists in `pipeline.py`; each step's `output(**kwargs)` returns a dict that is passed to the next step.
-
-1. `Once` (sanity, p1, p2, `Show`) runs once.
-2. `Per_combination` (p3, p4) then runs once per `(duration, overlap)` in `config["p3_epoching"]["combinations"]`, starting each time from the `Once` output plus `duration`/`overlap`.
+Steps run in the order listed in `Registered_pipelines` in `pipeline.py`; each step's `output(**kwargs)` returns a dict that is passed to the next step. p2 drops p1's raw signals (`data`) once they are on disk.
 
 Notes:
 
-- p3 is lazy: its `subjects` output is a generator of small per-subject tasks; nothing is computed until p4's workers expand them into epochs (one subject in memory per worker).
+- p3 is lazy: its `subjects` output is a generator of small per-subject tasks; nothing is computed until p4's workers run them.
+- Each p4 worker loads one subject's p2 signal once and runs every `(duration, overlap)` in `config["p3_epoching"]["combinations"]`: all epochs are cut as one array (`windows`), then features are computed in single vectorised calls.
 - p3 only writes epoch files when its `"debug"` is `True`, to `out/p3/<Dataset>/<duration>s/<overlap>pct/<subject>_e<idx>_t<start>s.npy`.
-- p4 computes skew, kurtosis and Shannon entropy per channel for each epoch (48 features), then the 10/25/50/75/90th percentiles across the subject's epochs (240 values). Writes `out/p4/<Dataset>/<duration>s/<overlap>pct/<subject>.csv` (rows = features, columns = quantiles) and returns `features`, one row per subject.
+- p4 computes skew, kurtosis and Shannon entropy per channel for each epoch (3 × channels; 48 for the archive), then the 10/25/50/75/90th percentiles across the subject's epochs (240 values). Writes `out/p4/<Dataset>/<duration>s/<overlap>pct/<subject>.csv` (rows = features, columns = quantiles) and returns `features`: `{(duration, overlap): table with one row per subject}`.
+- Worker pools (p2, p4) use every CPU core (`os.cpu_count()`).
 
 ## Config
 
@@ -37,7 +36,7 @@ Options live in `components/p0_pipeline_config.py`: a plain Python dict (`CONFIG
 
 1. Create `components/pN_<name>.py` with a class subclassing `PipelineStep` (from `components.base`), set `section = "pN_<name>"`, read options from `self.opts`, and return a dict from `output`.
 2. Add a `"pN_<name>"` section to `CONFIG` in `components/p0_pipeline_config.py`.
-3. Import it in `pipeline.py` and add `YourStep(config)` to `Once` (before `Show`) if it runs once, or to `Per_combination` (after `Features`) if it runs per duration × overlap.
+3. Import it in `pipeline.py` and add `YourStep(config)` to `Registered_pipelines`.
 4. Add tests in `tests/test_<name>.py`.
 
 ## Stages

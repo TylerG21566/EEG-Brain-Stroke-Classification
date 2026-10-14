@@ -1,6 +1,7 @@
 # Pipeline options. One section per stage; each step reads its section as self.opts.
 # Relative paths resolve against ABOMINATION/ (absolute paths pass through).
 
+import os
 from enum import StrEnum
 
 class Dataset(StrEnum): # members compare equal to their string, so they work as dict keys / in JSON
@@ -46,11 +47,11 @@ CONFIG = {
         "eye_factor": 0.2,  # scale on the FP1/FP2 regression
         "eye_channels": ["FP1", "FP2"],  # regress on their mean when all present
         "non_eeg": ["HEOL", "HEOR", "VEOL", "VEOR", "TRIGGER"],  # dropped before CAR
-        "processes": 4,  # worker pool size
+        "processes": os.cpu_count(),  # worker pool size (all cores)
         "debug": True,  # True: print the first processed sample's signal
     },
     "p3_epoching": {
-        # (duration s, overlap %) pairs; the pipeline runs p3 onward once per pair
+        # (duration s, overlap %) pairs; each p4 worker loads a subject once and runs every pair
         "combinations": [(d, o) for d in (4, 10) for o in (0, 50)],
         "clip": 20.0,  # clip z-scored epochs at ±clip SD
         "out_dirs": {  # debug only: <out_dir>/<duration>s/<overlap>pct/<subject>_e<idx>_t<start>s.npy
@@ -60,7 +61,7 @@ CONFIG = {
         "debug": False,  # True: write every epoch to out_dirs as it is generated
     },
     "p4_features": {  # per-epoch features -> per-subject quantile summary
-        "processes": 4,  # worker pool size (one subject per task)
+        "processes": os.cpu_count(),  # worker pool size (all cores; one subject per task)
         "quantiles": [10, 25, 50, 75, 90],  # percentiles of each feature across a subject's epochs
         "entropy_bins": 64,  # histogram bins over [-clip, clip] for Shannon entropy
         "out_dirs": {  # <out_dir>/<duration>s/<overlap>pct/<subject>.csv: rows = 48 features, columns = quantiles

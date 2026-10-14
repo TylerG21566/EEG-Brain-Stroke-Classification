@@ -1,3 +1,4 @@
+import time
 import numpy as np
 import pandas as pd
 from components.base import PipelineStep, load_config
@@ -23,28 +24,23 @@ class Show(PipelineStep):
 
 config = load_config()
 
-# p1/p2 run once; p3/p4 run once per (duration, overlap) in config["p3_epoching"]["combinations"]
-Once: list[PipelineStep] = [
+Registered_pipelines: list[PipelineStep] = [
     SanityStep(config),
     DataFormat(config),
     SampleProcessing(config),
     Show(config),
-]
-
-Per_combination: list[PipelineStep] = [
-    Epoching(config),
-    Features(config),
+    Epoching(config), # lazy: hands p4 one task per subject
+    Features(config), # each task runs every (duration, overlap) in config["p3_epoching"]["combinations"]
 ]
 
 def main():
     layer = {}
-    for step in Once:
+    start = time.perf_counter()
+    for step in Registered_pipelines:
+        t = time.perf_counter()
         layer = step.output(**layer)
-    for duration, overlap in config["p3_epoching"]["combinations"]:
-        print(f"\n#### {duration:g} s / {overlap:g}% overlap")
-        out = {**layer, "duration": duration, "overlap": overlap}
-        for step in Per_combination:
-            out = step.output(**out)
+        print(f"[{type(step).__name__}] done in {time.perf_counter() - t:.2f} s", flush=True) # p3 is lazy, so ~0 s; its work is timed inside p4
+    print(f"[pipeline] total {time.perf_counter() - start:.2f} s")
 
 if __name__ == "__main__":
     main()
