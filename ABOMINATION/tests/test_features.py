@@ -2,9 +2,11 @@ import numpy as np, pandas as pd, pytest
 from scipy.stats import entropy, kurtosis, skew
 import components.p0_pipeline_config as p0
 from components.p3_epoching import Epoching, combo_dir, epochs
-from components.p4_features import Features, epoch_features
+from components.features.shape import epoch_features
+from components.p4_features import Features
 
 CH = ["FP1", "C3", "O1"]
+NW = len(CH) * 10  # Welch rows: 4 rel + 6 ratios per channel (160 for 16 channels)
 
 
 @pytest.fixture
@@ -35,11 +37,16 @@ def test_output_quantile_summaries(processed, cfg):
     cfg["p3_epoching"]["combinations"] = [(4, 50), (10, 0)]
     d = combo_dir(cfg["p4_features"]["out_dirs"][p0.Dataset.ARCHIVE], 4, 50)
     d.mkdir(parents=True)
-    (d / "stale.csv").write_text("x")
-    out = Features(cfg).output(**Epoching(cfg).output(processed=processed))["features"]
-    q = cfg["p4_features"]["quantiles"]
-    assert set(out) == {(4, 50), (10, 0)} and all(f.shape == (2, len(CH) * 3 * len(q)) for f in out.values())
-    assert sorted(f.name for f in d.glob("*.csv")) == ["normal_1.csv", "tia_2.csv"]  # stale file deleted
+    (d / "stale.csv").write_text("x"), (d / "stale.png").write_text("x")
+    res = Features(cfg).output(**Epoching(cfg).output(processed=processed))
+    out, welch, q = res["features"], res["welch_features"], cfg["p4_features"]["quantiles"]
+    assert set(out) == set(welch) == {(4, 50), (10, 0)} and all(f.shape == (2, len(CH) * 3 * len(q)) for f in out.values())
+    assert all(f.shape == (2, NW * len(q)) for f in welch.values())
+    for c in welch:
+        cd = combo_dir(cfg["p4_features"]["out_dirs"][p0.Dataset.ARCHIVE], *c)
+        assert len(pd.read_csv(cd / "normal_1_welch.csv")) == NW and (cd / "normal_1.png").exists()
+    assert sorted(f.name for f in d.glob("*.csv")) == ["normal_1.csv", "normal_1_welch.csv", "tia_2.csv", "tia_2_welch.csv"]  # stale deleted
+    assert sorted(f.name for f in d.glob("*.png")) == ["normal_1.png", "tia_2.png"]
     csv = pd.read_csv(d / "normal_1.csv", index_col="feature")
     assert csv.shape == (len(CH) * 3, len(q)) and list(csv.columns) == [f"q{p}" for p in q]
     assert np.allclose(out[(4, 50)].loc["normal_1", [f"{c}_{f}" for f in csv.index for c in csv.columns]], csv.values.ravel())
