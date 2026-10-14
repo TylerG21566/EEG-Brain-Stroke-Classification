@@ -32,7 +32,7 @@ def archive(root, opts):
         rows.append({"subject_id": f"{subtype}_{subject}", "label": p.parts[-2], "subtype": subtype, "split": p.parts[-3], "subject": int(subject),
                      "file": int(file), "trial": int(flat[-1]), "signal": flat[:-1].reshape(a["channels"], a["samples"]), "path": str(p)})
     df = pd.DataFrame(rows).sort_values(["split", "label", "subtype", "subject", "file"], ignore_index=True)
-    df.attrs = {"sfreq": a["sfreq"], "channels": a["channel_names"]} # Tamim's assumed order (archive_channel_mapping.json)
+    df.attrs = {"sfreq": a["sfreq"], "channels": a["channel_names"]} # assumed 10-20 order
     return df
 
 def figshare(root):

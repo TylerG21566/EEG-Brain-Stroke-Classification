@@ -9,7 +9,7 @@ from components.p0_pipeline_config import Dataset
 # per-sample fields kept in the returned "processed" table (signals are saved to the .npz files)
 META = ["subject_id", "label", "subtype", "split", "sfreq", "channels", "eye_regressed", "paths"]
 
-def archive_samples(df): # Tamim: stitch each subject's 4 s trials into one recording
+def archive_samples(df): # archive: stitch each subject's 4 s trials into one recording
     df = df.sort_values(["split", "label", "subtype", "subject", "file"])
     # rows are sorted by file number, so each group holds one subject's trials in order;
     # concatenating along time (axis=1) joins 50 × (16, 1024) trials into one (16, 51200) ≈ 200 s signal
@@ -27,18 +27,23 @@ SAMPLERS = {Dataset.ARCHIVE: archive_samples, Dataset.FIGSHARE: figshare_samples
 
 def process(sample, opts): # opts = config["p2_sample_processing"]
     sfreq = opts["sfreq"]
+    
     # 1. drop EOG + trigger channels
     non_eeg = {c.upper() for c in opts["non_eeg"]}
     keep = [i for i, c in enumerate(sample["channels"]) if c.upper() not in non_eeg]
     chans = [sample["channels"][i] for i in keep]
     x = np.asarray(sample["signal"], dtype=np.float64)[keep]
+    
     # 2. resample to sfreq (250 Hz)
     if sample["sfreq"] != sfreq:
         x = mne.filter.resample(x, up=sfreq, down=sample["sfreq"], verbose=False)
+        
     # 3. CAR: subtract the mean across channels at each time point
     x = x - x.mean(axis=0)
+    
     # 4. bandpass l_freq-h_freq (1-30 Hz)
     x = mne.filter.filter_data(x, sfreq, opts["l_freq"], opts["h_freq"], method="fir", verbose=False)
+    
     # 5. eye artefacts: regress out the mean of the eye channels (FP1, FP2) when all exist
     upper = [c.upper() for c in chans]
     eyes = [c.upper() for c in opts["eye_channels"]]
@@ -65,6 +70,11 @@ class SampleProcessing(PipelineStep):
             for s in pool.imap(partial(process, opts=opts), SAMPLERS[dataset](df)):
                 f = out / f"{s['subject_id']}.npz" # one file per subject, e.g. ischemic_5.npz / sub-01.npz
                 np.savez(f, signal=s["signal"])
+                if opts["debug"] and not rows:
+                    print("##############################")
+                    print("[P2 DEBUG MODE]")
+                    print("##############################")
+                    print(f"\n== p2 first sample {s['subject_id']} {s['signal'].shape} @ {s['sfreq']} Hz, channels {s['channels']}\n{s['signal']}")
                 rows.append({**{k: s[k] for k in META}, "file": str(f)})
         processed = pd.DataFrame(rows, columns=META + ["file"])
         processed.attrs = {"sfreq": opts["sfreq"], "dataset": dataset, "out_dir": str(out)}

@@ -4,7 +4,7 @@
 from enum import StrEnum
 
 class Dataset(StrEnum): # members compare equal to their string, so they work as dict keys / in JSON
-    ARCHIVE = "archive"  # Tamim's Kaggle .npy trials
+    ARCHIVE = "archive"  # Kaggle .npy trials
     FIGSHARE = "figshare"  # Liu & Lv stroke EDFs
 
 class View(StrEnum): # p1 debug popup
@@ -19,7 +19,7 @@ CONFIG = {
     },
     "p1_data_formatting": {
         "dataset": Dataset.ARCHIVE,  # Dataset.ARCHIVE | Dataset.FIGSHARE
-        "debug_view": View.NPY,  # View.NONE | View.TABLES | View.NPY
+        "debug_view": View.NONE,  # View.NONE | View.TABLES | View.NPY
         "view_samples": 1024,  # samples shown by View.NPY
         "debug_dir": "out/p1_debug",  # where the debug CSVs/HTML go
         "roots": {
@@ -30,14 +30,14 @@ CONFIG = {
             "channels": 16,
             "samples": 1024,
             "sfreq": 256.0,
-            # Tamim's assumed 10-20 order (his archive_channel_mapping.json); FZ/CZ/PZ missing
+            # assumed 10-20 order; FZ/CZ/PZ missing
             "channel_names": ["FP1", "FP2", "F3", "F4", "C3", "C4", "P3", "P4", "O1", "O2", "F7", "F8", "T3", "T4", "T5", "T6"],
             "name_pattern": r"(\w+)_subject_(\d+)_(\d+)\.npy",  # subtype, subject, file index
         },
     },
     "p2_sample_processing": {
         "out_dirs": {  # one output folder per dataset
-            Dataset.ARCHIVE: "out/p2/Tamim",
+            Dataset.ARCHIVE: "out/p2/Archive",
             Dataset.FIGSHARE: "out/p2/FIgshare",
         },
         "sfreq": 250.0,  # resample target (Hz)
@@ -47,5 +47,20 @@ CONFIG = {
         "eye_channels": ["FP1", "FP2"],  # regress on their mean when all present
         "non_eeg": ["HEOL", "HEOR", "VEOL", "VEOR", "TRIGGER"],  # dropped before CAR
         "processes": 4,  # worker pool size
+        "debug": True,  # True: print the first processed sample's signal
+    },
+    "p3_epoching": {
+        # (duration s, overlap %) pairs; the pipeline runs p3 onward once per pair
+        "combinations": [(d, o) for d in (4, 10) for o in (0, 50)],
+        "clip": 20.0,  # clip z-scored epochs at ±clip SD
+        "out_dirs": {  # debug only: <out_dir>/<duration>s/<overlap>pct/<subject>_e<idx>_t<start>s.npy
+            Dataset.ARCHIVE: "out/p3/Archive",
+            Dataset.FIGSHARE: "out/p3/FIgshare",
+        },
+        "debug": False,  # True: write every epoch to out_dirs as it is generated
+    },
+    "p4_features": {
+        "processes": 4,  # worker pool size
+        "head": 5,  # samples per channel printed for each epoch
     },
 }

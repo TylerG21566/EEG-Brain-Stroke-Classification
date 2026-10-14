@@ -8,24 +8,24 @@ Run from `ABOMINATION/` with the venv set up (see the top-level README).
 .venv/bin/python src/pipeline.py
 ```
 
-Steps run in the order listed in `Registered_pipelines` in `pipeline.py`. Each step's `output(**kwargs)` returns a dict that is passed to the next step.
+Two step lists in `pipeline.py`; each step's `output(**kwargs)` returns a dict that is passed to the next step.
+
+1. `Once` (sanity, p1, p2, `Show`) runs once.
+2. `Per_combination` (p3, p4) then runs once per `(duration, overlap)` in `config["p3_epoching"]["combinations"]`, starting each time from the `Once` output plus `duration`/`overlap`.
+
+Notes:
+
+- p3 is lazy: its `epochs` output is a generator, so nothing is computed until p4 consumes it.
+- p3 only writes epoch files when its `"debug"` is `True`, to `out/p3/<Dataset>/<duration>s/<overlap>pct/<subject>_e<idx>_t<start>s.npy`.
+- p4 is currently a placeholder: a pool of 4 workers prints each epoch's name (subject, start, duration, overlap), shape and head.
 
 ## Config
 
 Options live in `components/p0_pipeline_config.py`: a plain Python dict (`CONFIG`) with comments. Edit it to change options. Dataset and view choices are `StrEnum` classes there (`Dataset.ARCHIVE`/`Dataset.FIGSHARE`, `View.NONE`/`View.TABLES`/`View.NPY`) for steps to import. `base.load_config()` returns a deep copy, loaded once in `pipeline.py` and passed to every step.
 
-- One top-level key per stage (`p1_data_formatting`, `p2_sample_processing`) plus shared `paths`.
+- One top-level key per stage (`p1_data_formatting` … `p4_features`) plus shared `paths`.
 - Relative paths resolve against `ABOMINATION/` (`base.resolve`).
 - Each step reads its section as `self.opts` (full dict in `self.config`); the section is set by `section = "..."` on the class.
-
-## p2: sample processing
-
-`SampleProcessing` (`components/p2_sample_processing.py`) takes p1's `data` DataFrame and adds `processed`, a metadata DataFrame. Dataset comes from `data.attrs["dataset"]` (set by p1), else `p1_data_formatting.dataset`. Options are under `p2_sample_processing` in the config.
-
-- Preprocessing per recording: resample to `sfreq` (250 Hz) → common average reference → bandpass `l_freq`–`h_freq` (1–30 Hz) → `eye_channels` (FP1/FP2) eye-artefact regression (when those channels exist).
-- Archive trials are stitched per subject; FIgshare recordings are not.
-- Writes to `out_dirs[dataset]` (`out/p2/Tamim/` or `out/p2/FIgshare/`) as one `.npz` per subject named `<subject_id>.npz` (e.g. `ischemic_5.npz`, `sub-01.npz`) holding just `signal`; labels/split are in the returned `processed` table. Existing `.npz` files there are deleted at start.
-- Runs over a `multiprocessing.Pool` (`processes` workers, 4), so `pipeline.py` must keep `main()` under `if __name__ == "__main__"`.
 
 ## Test
 
@@ -37,5 +37,21 @@ Options live in `components/p0_pipeline_config.py`: a plain Python dict (`CONFIG
 
 1. Create `components/pN_<name>.py` with a class subclassing `PipelineStep` (from `components.base`), set `section = "pN_<name>"`, read options from `self.opts`, and return a dict from `output`.
 2. Add a `"pN_<name>"` section to `CONFIG` in `components/p0_pipeline_config.py`.
-3. Import it in `pipeline.py` and add `YourStep(config)` to `Registered_pipelines` (before `Show`).
+3. Import it in `pipeline.py` and add `YourStep(config)` to `Once` (before `Show`) if it runs once, or to `Per_combination` (after `Features`) if it runs per duration × overlap.
 4. Add tests in `tests/test_<name>.py`.
+
+## Stages
+
+| Stage | What it does |
+|---|---|
+| p1 Load | Raw trials / EDFs into a table: signal, label, subtype, split |
+| p2 Preprocess | Stitch, resample 250 Hz, CAR, bandpass 1–30 Hz, FP1/FP2 eye regression; one `.npz` per subject |
+| p3 Epoch | Sliding window (duration × overlap); z-score per epoch, clip ±20 SD |
+| p4 Features | Per-epoch features; keep 48 (kurtosis, skew, entropy × 16 channels) |
+| p5 Subject summary | q10/25/50/75/90 of each feature across epochs: 240 values, one row per subject |
+| p6 Select | Top 30 features by mutual information |
+| p7 Model | XGBoost, fixed hyperparameters, `scale_pos_weight` = neg/pos |
+| p8 Evaluate | Subject-level stratified 5-fold CV × 50 repeats (AUC) + 32/8 holdout, threshold 0.5 |
+
+- p6–p7 are fitted inside each CV fold, so p8 calls them per fold rather than them running once in the chain.
+- p3–p8 repeat per duration × overlap config (64 total); p1–p2 run once and are reused.
