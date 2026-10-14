@@ -73,9 +73,11 @@ CONFIG = {
                   "slow": ["delta", "theta"], "fast": ["alpha", "beta"]},
         # BSI per left/right pair (skipped if a channel is missing) + their mean, from the same Welch PSD over the band range
         "asymmetry": {"enabled": True, "features": {"pairs": True, "mean": True}, "pairs": [("FP1", "FP2"), ("F3", "F4"), ("C3", "C4"), ("P3", "P4"), ("O1", "O2"), ("F7", "F8"), ("T3", "T4"), ("T5", "T6")]},
+        # regularity entropies per channel (3 × 16 = 48): embedding m, tolerance r × SD, fuzzy exponent n; O(N²), so run on every decim-th sample (250 -> 62.5 Hz, still above the 30 Hz bandpass) in chunks of (epoch, channel) series
+        "entropy": {"enabled": True, "features": {"fuzzy": True, "sample": True, "approx": True}, "m": 2, "r": 0.2, "n": 2, "decim": 4, "chunk": 32},
         # Morlet time-frequency PNG per subject: freqs (Hz), cycles per wavelet, time decimation, epochs per batch, image dpi
         "wavelet": {"enabled": True, "freqs": list(range(1, 31)), "n_cycles": 6, "decim": 5, "chunk": 16, "dpi": 90},
-        # <out_dir>/<duration>s/<overlap>pct/: <subject>.csv (shape features), <subject>_welch.csv (Welch), <subject>_bsi.csv (asymmetry); rows = features, columns = quantiles; <subject>.png (wavelet TF)
+        # <out_dir>/<duration>s/<overlap>pct/: <subject>.csv (shape features), <subject>_welch.csv (Welch), <subject>_bsi.csv (asymmetry), <subject>_entropy.csv (regularity); rows = features, columns = quantiles; <subject>.png (wavelet TF)
         "out_dirs": {
             Dataset.ARCHIVE: "out/p4/Archive",
             Dataset.FIGSHARE: "out/p4/FIgshare",

@@ -4,11 +4,11 @@ from multiprocessing import Pool
 import numpy as np
 import pandas as pd
 from components.base import PipelineStep, resolve
-from components.features import AsymmetryFeatures, ShapeFeatures, WaveletFeatures, WelchFeatures
+from components.features import AsymmetryFeatures, EntropyFeatures, ShapeFeatures, WaveletFeatures, WelchFeatures
 from components.p3_epoching import combo_dir, load, save_epochs, windows
 
-EXTRACTORS = {"shape": ShapeFeatures, "welch": WelchFeatures, "asymmetry": AsymmetryFeatures} # config key -> class
-RETURNS = {"shape": "features", "welch": "welch_features", "asymmetry": "asymmetry_features"} # config key -> output key
+EXTRACTORS = {"shape": ShapeFeatures, "welch": WelchFeatures, "asymmetry": AsymmetryFeatures, "entropy": EntropyFeatures} # config key -> class
+RETURNS = {"shape": "features", "welch": "welch_features", "asymmetry": "asymmetry_features", "entropy": "entropy_features"} # config key -> output key
 
 def table(f, names, quantiles): # (n_epochs, n_features) -> percentiles across epochs (NaN when there are no epochs)
     q = np.percentile(f, quantiles, axis=0).T if len(f) else np.full((len(names), len(quantiles)), np.nan)
@@ -55,7 +55,7 @@ class Features(PipelineStep):
             for sid, results in pool.imap(partial(summarise, opts=opts, base=base), kwargs["subjects"]):
                 for (d, o), (n, tables, dt) in results.items():
                     secs[(d, o)] += dt
-                    for suffix, summary in tables.items(): # e.g. <sid>.csv (48 shape), <sid>_welch.csv (208 band), <sid>_bsi.csv (9 asymmetry) × quantiles
+                    for suffix, summary in tables.items(): # e.g. <sid>.csv (48 shape), <sid>_welch.csv (208 band), <sid>_bsi.csv (9 asymmetry), <sid>_entropy.csv (48 regularity) × quantiles
                         summary.to_csv(combo_dir(base, d, o) / f"{sid}{suffix}.csv", index_label="feature")
                         if opts["debug"] and not rows[(d, o)]:
                             print(f"\n== p4 first subject {sid}{suffix} @ {d:g} s / {o:g}%: {n} epochs\n{summary}")

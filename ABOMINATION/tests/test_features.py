@@ -8,6 +8,7 @@ from components.p4_features import Features
 CH = ["FP1", "C3", "C4"]
 NW = len(CH) * 13  # Welch rows: 4 rel + 6 ratios + dtabr, spec_mean, slope per channel (208 for 16 channels)
 NB = 2  # BSI rows: C3_C4 + mean (9 for the archive)
+NE = len(CH) * 3  # entropy rows: fuzzy, sample, approx per channel
 
 
 @pytest.fixture
@@ -42,11 +43,12 @@ def test_output_quantile_summaries(processed, cfg):
     res = Features(cfg).output(**Epoching(cfg).output(processed=processed))
     out, welch, bsi, q = res["features"], res["welch_features"], res["asymmetry_features"], cfg["p4_features"]["quantiles"]
     assert set(out) == set(welch) == {(4, 50), (10, 0)} and all(f.shape == (2, len(CH) * 3 * len(q)) for f in out.values())
+    assert all(f.shape == (2, NE * len(q)) for f in res["entropy_features"].values())
     assert all(f.shape == (2, NW * len(q)) for f in welch.values()) and all(f.shape == (2, NB * len(q)) for f in bsi.values())
     for c in welch:
         cd = combo_dir(cfg["p4_features"]["out_dirs"][p0.Dataset.ARCHIVE], *c)
-        assert len(pd.read_csv(cd / "normal_1_welch.csv")) == NW and len(pd.read_csv(cd / "normal_1_bsi.csv")) == NB and (cd / "normal_1.png").exists()
-    assert sorted(f.name for f in d.glob("*.csv")) == ["normal_1.csv", "normal_1_bsi.csv", "normal_1_welch.csv", "tia_2.csv", "tia_2_bsi.csv", "tia_2_welch.csv"]  # stale deleted
+        assert len(pd.read_csv(cd / "normal_1_welch.csv")) == NW and len(pd.read_csv(cd / "normal_1_bsi.csv")) == NB and len(pd.read_csv(cd / "normal_1_entropy.csv")) == NE and (cd / "normal_1.png").exists()
+    assert sorted(f.name for f in d.glob("*.csv")) == [f"{s}{x}.csv" for s in ("normal_1", "tia_2") for x in ("", "_bsi", "_entropy", "_welch")]  # stale deleted
     assert sorted(f.name for f in d.glob("*.png")) == ["normal_1.png", "tia_2.png"]
     csv = pd.read_csv(d / "normal_1.csv", index_col="feature")
     assert csv.shape == (len(CH) * 3, len(q)) and list(csv.columns) == [f"q{p}" for p in q]
