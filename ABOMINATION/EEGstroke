@@ -1,0 +1,44 @@
+*Literature Review 
+
+    Reading List Preparation
+        Review Tamim.pdf and its references, focusing on EEG-based stroke classification, segmentation benchmarks, and machine learning pipelines1.
+        Identify recent journal articles and conference papers (last 3–5 years) on EEG stroke datasets, segmentation strategies, and classifier comparisons.
+        Compile a reading list, including foundational papers on EEG preprocessing, feature extraction, and clinical applications.
+    Project Planning
+* Data Collection & Preprocessing
+
+    Data Collection
+        Acquire the public EEG stroke dataset used in Tamim.pdf
+        Search for additional public EEG stroke datasets (e.g., PhysioNet, TUH EEG Corpus, OpenNeuro) for validation or extension.
+        Document dataset characteristics (subject count, stroke subtypes, recording protocols).
+    Data Preprocessing
+        Implement preprocessing steps: stitching, resampling, re-referencing, bandpass filtering, eye artefact regression (as described in Tamim.pdf).
+        Explore and document preprocessing variations (e.g., alternative filters, artefact removal methods).
+        Prepare scripts for reproducible preprocessing.
+
+* AI Architecture Development
+
+    Feature Engineering
+        Extract features as per Tamim.pdf (time-shape statistics, quantiles, power spectral density, asymmetry, coherence, band power ratios).
+        Experiment with additional feature sets (e.g., deep learning features, connectivity metrics).
+    Model Development
+        Implement the XGBoost classifier pipeline.
+        Test alternative classifiers (e.g., SVM, neural networks, ensemble methods) for benchmarking.
+        Set up subject-level cross-validation and holdout evaluation protocols.
+
+* Ablation Study & Analysis
+
+    Ablation Study
+        Systematically vary segmentation parameters (window duration, overlap) as in Tamim.pdf
+        Conduct ablation studies on feature sets, preprocessing steps, and classifier choices.
+        Analyze the impact of each component on classification performance (AUC-ROC, sensitivity, specificity).
+        Perform statistical significance testing (e.g., p-values, confidence intervals).
+    Result Visualization
+        Generate figures and tables summarizing ablation results.
+        Compare findings with those in Tamim.pdf and recent literature.
+
+* Journal Writing & Final Submission
+
+
+
+
