@@ -5,8 +5,9 @@ from components.p3_epoching import Epoching, combo_dir, epochs
 from components.features.shape import epoch_features
 from components.p4_features import Features
 
-CH = ["FP1", "C3", "O1"]
-NW = len(CH) * 10  # Welch rows: 4 rel + 6 ratios per channel (160 for 16 channels)
+CH = ["FP1", "C3", "C4"]
+NW = len(CH) * 13  # Welch rows: 4 rel + 6 ratios + dtabr, spec_mean, slope per channel (208 for 16 channels)
+NB = 2  # BSI rows: C3_C4 + mean (9 for the archive)
 
 
 @pytest.fixture
@@ -39,13 +40,13 @@ def test_output_quantile_summaries(processed, cfg):
     d.mkdir(parents=True)
     (d / "stale.csv").write_text("x"), (d / "stale.png").write_text("x")
     res = Features(cfg).output(**Epoching(cfg).output(processed=processed))
-    out, welch, q = res["features"], res["welch_features"], cfg["p4_features"]["quantiles"]
+    out, welch, bsi, q = res["features"], res["welch_features"], res["asymmetry_features"], cfg["p4_features"]["quantiles"]
     assert set(out) == set(welch) == {(4, 50), (10, 0)} and all(f.shape == (2, len(CH) * 3 * len(q)) for f in out.values())
-    assert all(f.shape == (2, NW * len(q)) for f in welch.values())
+    assert all(f.shape == (2, NW * len(q)) for f in welch.values()) and all(f.shape == (2, NB * len(q)) for f in bsi.values())
     for c in welch:
         cd = combo_dir(cfg["p4_features"]["out_dirs"][p0.Dataset.ARCHIVE], *c)
-        assert len(pd.read_csv(cd / "normal_1_welch.csv")) == NW and (cd / "normal_1.png").exists()
-    assert sorted(f.name for f in d.glob("*.csv")) == ["normal_1.csv", "normal_1_welch.csv", "tia_2.csv", "tia_2_welch.csv"]  # stale deleted
+        assert len(pd.read_csv(cd / "normal_1_welch.csv")) == NW and len(pd.read_csv(cd / "normal_1_bsi.csv")) == NB and (cd / "normal_1.png").exists()
+    assert sorted(f.name for f in d.glob("*.csv")) == ["normal_1.csv", "normal_1_bsi.csv", "normal_1_welch.csv", "tia_2.csv", "tia_2_bsi.csv", "tia_2_welch.csv"]  # stale deleted
     assert sorted(f.name for f in d.glob("*.png")) == ["normal_1.png", "tia_2.png"]
     csv = pd.read_csv(d / "normal_1.csv", index_col="feature")
     assert csv.shape == (len(CH) * 3, len(q)) and list(csv.columns) == [f"q{p}" for p in q]

@@ -64,11 +64,15 @@ CONFIG = {
         "processes": os.cpu_count(),  # worker pool size (all cores; one subject per task)
         "quantiles": [10, 25, 50, 75, 90],  # percentiles of each feature across a subject's epochs
         "entropy_bins": 64,  # histogram bins over [-clip, clip] for Shannon entropy
-        # Welch PSD per channel: 4 relative band powers + 6 pairwise band ratios (10 × 16 = 160); nperseg = min(win, max_nperseg_s × sfreq), floored at min_nperseg
-        "welch": {"bands": {"delta": (1.0, 4.0), "theta": (4.0, 8.0), "alpha": (8.0, 13.0), "beta": (13.0, 30.0)}, "window": "hamming", "max_nperseg_s": 2.0, "min_nperseg": 64},
+        # Welch PSD per channel: 4 relative band powers + 6 pairwise band ratios + DTABR, spectral mean, 1/f slope (13 × 16 = 208); nperseg = min(win, max_nperseg_s × sfreq), floored at min_nperseg
+        # slow / fast: bands summed for DTABR = (delta + theta) / (alpha + beta)
+        "welch": {"bands": {"delta": (1.0, 4.0), "theta": (4.0, 8.0), "alpha": (8.0, 13.0), "beta": (13.0, 30.0)}, "window": "hamming", "max_nperseg_s": 2.0, "min_nperseg": 64,
+                  "slow": ["delta", "theta"], "fast": ["alpha", "beta"]},
+        # BSI per left/right pair (skipped if a channel is missing) + their mean, from the same Welch PSD over the band range
+        "asymmetry": {"pairs": [("FP1", "FP2"), ("F3", "F4"), ("C3", "C4"), ("P3", "P4"), ("O1", "O2"), ("F7", "F8"), ("T3", "T4"), ("T5", "T6")]},
         # Morlet time-frequency PNG per subject: freqs (Hz), cycles per wavelet, time decimation, epochs per batch, image dpi
         "wavelet": {"enabled": True, "freqs": list(range(1, 31)), "n_cycles": 6, "decim": 5, "chunk": 16, "dpi": 90},
-        # <out_dir>/<duration>s/<overlap>pct/: <subject>.csv (shape features), <subject>_welch.csv (Welch); rows = features, columns = quantiles; <subject>.png (wavelet TF)
+        # <out_dir>/<duration>s/<overlap>pct/: <subject>.csv (shape features), <subject>_welch.csv (Welch), <subject>_bsi.csv (asymmetry); rows = features, columns = quantiles; <subject>.png (wavelet TF)
         "out_dirs": {
             Dataset.ARCHIVE: "out/p4/Archive",
             Dataset.FIGSHARE: "out/p4/FIgshare",

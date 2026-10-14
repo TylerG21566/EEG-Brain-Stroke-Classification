@@ -15,7 +15,7 @@ Notes:
 - p3 is lazy: its `subjects` output is a generator of small per-subject tasks; nothing is computed until p4's workers run them.
 - Each p4 worker loads one subject's p2 signal once and runs every `(duration, overlap)` in `config["p3_epoching"]["combinations"]`: all epochs are cut as one array (`windows`), then features are computed in single vectorised calls.
 - p3 only writes epoch files when its `"debug"` is `True`, to `out/p3/<Dataset>/<duration>s/<overlap>pct/<subject>_e<idx>_t<start>s.npy`.
-- p4 computes skew, kurtosis and Shannon entropy per channel for each epoch (3 × channels; 48 for the archive), then the 10/25/50/75/90th percentiles across the subject's epochs (240 values). Writes `out/p4/<Dataset>/<duration>s/<overlap>pct/<subject>.csv` (rows = features, columns = quantiles) and returns `features`: `{(duration, overlap): table with one row per subject}`; Welch band features go to `<subject>_welch.csv` / `welch_features` likewise, plus a wavelet TF `<subject>.png`. Extractors live in `components/features/`.
+- p4 computes skew, kurtosis and Shannon entropy per channel for each epoch (3 × channels; 48 for the archive), then the 10/25/50/75/90th percentiles across the subject's epochs (240 values). Writes `out/p4/<Dataset>/<duration>s/<overlap>pct/<subject>.csv` (rows = features, columns = quantiles) and returns `features`: `{(duration, overlap): table with one row per subject}`; Welch band features go to `<subject>_welch.csv` / `welch_features` and left/right BSI to `<subject>_bsi.csv` / `asymmetry_features` likewise, plus a wavelet TF `<subject>.png`. Extractors live in `components/features/`.
 - Worker pools (p2, p4) use every CPU core (`os.cpu_count()`).
 
 ## Config
@@ -46,7 +46,7 @@ Options live in `components/p0_pipeline_config.py`: a plain Python dict (`CONFIG
 | p1 Load | Raw trials / EDFs into a table: signal, label, subtype, split |
 | p2 Preprocess | Stitch, resample 250 Hz, CAR, bandpass 1–30 Hz, FP1/FP2 eye regression; one `.npz` per subject |
 | p3 Epoch | Sliding window (duration × overlap); z-score per epoch, clip ±20 SD |
-| p4 Features | Per-epoch shape features (skew, kurtosis, entropy × 16 = 48) + Welch band features (4 relative powers + 6 ratios × 16 = 160) → q10/25/50/75/90 across epochs, one quantile CSV per subject each; Morlet wavelet TF PNG per subject |
+| p4 Features | Per-epoch shape features (skew, kurtosis, entropy × 16 = 48) + Welch band features (4 relative powers + 6 ratios + DTABR, spectral mean, 1/f slope × 16 = 208) + BSI per left/right pair (8 + mean = 9) → q10/25/50/75/90 across epochs, one quantile CSV per subject each; Morlet wavelet TF PNG per subject |
 | p5 Select | Top 30 features by mutual information |
 | p6 Model | XGBoost, fixed hyperparameters, `scale_pos_weight` = neg/pos |
 | p7 Evaluate | Subject-level stratified 5-fold CV × 50 repeats (AUC) + 32/8 holdout, threshold 0.5 |

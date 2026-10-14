@@ -4,7 +4,7 @@ from multiprocessing import Pool
 import numpy as np
 import pandas as pd
 from components.base import PipelineStep, resolve
-from components.features import ShapeFeatures, WaveletFeatures, WelchFeatures
+from components.features import AsymmetryFeatures, ShapeFeatures, WaveletFeatures, WelchFeatures
 from components.p3_epoching import combo_dir, load, save_epochs, windows
 
 def table(f, names, quantiles): # (n_epochs, n_features) -> percentiles across epochs (NaN when there are no epochs)
@@ -16,9 +16,9 @@ def summarise(task, opts, base): # one subject (runs in a worker): load once, th
     print(f"[worker {os.getpid()}] start {sid} ({len(task['combinations'])} combinations)", flush=True)
     t0 = time.perf_counter()
     signal = load(row)
-    extractors = [ShapeFeatures(opts), WelchFeatures(opts)]
+    extractors = [ShapeFeatures(opts), WelchFeatures(opts), AsymmetryFeatures(opts)]
     wavelet = WaveletFeatures(opts) if opts["wavelet"]["enabled"] else None
-    names = [e.names(row["channels"]) for e in extractors]
+    names = [e.names(row["channels"]) for e in extractors] # also fixes AsymmetryFeatures' pair indices
     out = {}
     for d, o in task["combinations"]:
         t = time.perf_counter()
@@ -51,7 +51,7 @@ class Features(PipelineStep):
             for sid, results in pool.imap(partial(summarise, opts=opts, base=base), kwargs["subjects"]):
                 for (d, o), (n, tables, dt) in results.items():
                     secs[(d, o)] += dt
-                    for suffix, summary in tables.items(): # e.g. <sid>.csv (48 shape), <sid>_welch.csv (160 band) × quantiles
+                    for suffix, summary in tables.items(): # e.g. <sid>.csv (48 shape), <sid>_welch.csv (208 band), <sid>_bsi.csv (9 asymmetry) × quantiles
                         summary.to_csv(combo_dir(base, d, o) / f"{sid}{suffix}.csv", index_label="feature")
                         if opts["debug"] and not rows[(d, o)]:
                             print(f"\n== p4 first subject {sid}{suffix} @ {d:g} s / {o:g}%: {n} epochs\n{summary}")
@@ -66,4 +66,4 @@ class Features(PipelineStep):
                 df.attrs = {"out_dir": str(combo_dir(base, d, o)), "duration": d, "overlap": o}
                 tables[(d, o)] = df
             return tables
-        return {**kwargs, "features": wide(ShapeFeatures.suffix), "welch_features": wide(WelchFeatures.suffix)}
+        return {**kwargs, "features": wide(ShapeFeatures.suffix), "welch_features": wide(WelchFeatures.suffix), "asymmetry_features": wide(AsymmetryFeatures.suffix)}
