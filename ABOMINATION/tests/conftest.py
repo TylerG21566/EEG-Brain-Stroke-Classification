@@ -14,6 +14,7 @@ def cfg(tmp_path):  # fresh config per test: no popups, all paths under tmp_path
     c["p1_data_formatting"]["roots"] = {k: str(tmp_path / "in") for k in c["p1_data_formatting"]["roots"]}
     c["p1_data_formatting"]["debug_dir"] = str(tmp_path / "p1_debug")
     c["p2_sample_processing"]["out_dirs"] = {k: str(tmp_path / "out") for k in c["p2_sample_processing"]["out_dirs"]}
+    c["p4_features"]["out_dirs"] = {k: str(tmp_path / "p4") for k in c["p4_features"]["out_dirs"]}
     c["p3_epoching"]["out_dirs"] = {k: str(tmp_path / "p3") for k in c["p3_epoching"]["out_dirs"]}
     return c
 

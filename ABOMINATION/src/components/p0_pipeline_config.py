@@ -59,8 +59,14 @@ CONFIG = {
         },
         "debug": False,  # True: write every epoch to out_dirs as it is generated
     },
-    "p4_features": {
-        "processes": 4,  # worker pool size
-        "head": 5,  # samples per channel printed for each epoch
+    "p4_features": {  # per-epoch features -> per-subject quantile summary
+        "processes": 4,  # worker pool size (one subject per task)
+        "quantiles": [10, 25, 50, 75, 90],  # percentiles of each feature across a subject's epochs
+        "entropy_bins": 64,  # histogram bins over [-clip, clip] for Shannon entropy
+        "out_dirs": {  # <out_dir>/<duration>s/<overlap>pct/<subject>.csv: rows = 48 features, columns = quantiles
+            Dataset.ARCHIVE: "out/p4/Archive",
+            Dataset.FIGSHARE: "out/p4/FIgshare",
+        },
+        "debug": False,  # True: print the first subject's summary
     },
 }

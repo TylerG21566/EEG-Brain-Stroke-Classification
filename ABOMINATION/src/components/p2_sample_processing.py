@@ -78,4 +78,5 @@ class SampleProcessing(PipelineStep):
                 rows.append({**{k: s[k] for k in META}, "file": str(f)})
         processed = pd.DataFrame(rows, columns=META + ["file"])
         processed.attrs = {"sfreq": opts["sfreq"], "dataset": dataset, "out_dir": str(out)}
+        kwargs.pop("data") # raw signals are on disk now; later stages only need "processed" (file paths + metadata)
         return {**kwargs, "processed": processed}

@@ -15,9 +15,9 @@ Two step lists in `pipeline.py`; each step's `output(**kwargs)` returns a dict t
 
 Notes:
 
-- p3 is lazy: its `epochs` output is a generator, so nothing is computed until p4 consumes it.
+- p3 is lazy: its `subjects` output is a generator of small per-subject tasks; nothing is computed until p4's workers expand them into epochs (one subject in memory per worker).
 - p3 only writes epoch files when its `"debug"` is `True`, to `out/p3/<Dataset>/<duration>s/<overlap>pct/<subject>_e<idx>_t<start>s.npy`.
-- p4 is currently a placeholder: a pool of 4 workers prints each epoch's name (subject, start, duration, overlap), shape and head.
+- p4 computes skew, kurtosis and Shannon entropy per channel for each epoch (48 features), then the 10/25/50/75/90th percentiles across the subject's epochs (240 values). Writes `out/p4/<Dataset>/<duration>s/<overlap>pct/<subject>.csv` (rows = features, columns = quantiles) and returns `features`, one row per subject.
 
 ## Config
 
@@ -47,11 +47,10 @@ Options live in `components/p0_pipeline_config.py`: a plain Python dict (`CONFIG
 | p1 Load | Raw trials / EDFs into a table: signal, label, subtype, split |
 | p2 Preprocess | Stitch, resample 250 Hz, CAR, bandpass 1–30 Hz, FP1/FP2 eye regression; one `.npz` per subject |
 | p3 Epoch | Sliding window (duration × overlap); z-score per epoch, clip ±20 SD |
-| p4 Features | Per-epoch features; keep 48 (kurtosis, skew, entropy × 16 channels) |
-| p5 Subject summary | q10/25/50/75/90 of each feature across epochs: 240 values, one row per subject |
-| p6 Select | Top 30 features by mutual information |
-| p7 Model | XGBoost, fixed hyperparameters, `scale_pos_weight` = neg/pos |
-| p8 Evaluate | Subject-level stratified 5-fold CV × 50 repeats (AUC) + 32/8 holdout, threshold 0.5 |
+| p4 Features | Per-epoch features (kurtosis, skew, entropy × 16 channels = 48), then q10/25/50/75/90 across epochs: 240 values, one row per subject |
+| p5 Select | Top 30 features by mutual information |
+| p6 Model | XGBoost, fixed hyperparameters, `scale_pos_weight` = neg/pos |
+| p7 Evaluate | Subject-level stratified 5-fold CV × 50 repeats (AUC) + 32/8 holdout, threshold 0.5 |
 
-- p6–p7 are fitted inside each CV fold, so p8 calls them per fold rather than them running once in the chain.
-- p3–p8 repeat per duration × overlap config (64 total); p1–p2 run once and are reused.
+- p5–p6 are fitted inside each CV fold, so p7 calls them per fold rather than them running once in the chain.
+- p3–p7 repeat per duration × overlap combination; p1–p2 run once and are reused.
