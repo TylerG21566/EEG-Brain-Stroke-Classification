@@ -10,3 +10,5 @@ Ujjwalcode.tar.gz
 __pycache__/
 *.pyc
 .DS_Store
+
+ABOMINATION/out/

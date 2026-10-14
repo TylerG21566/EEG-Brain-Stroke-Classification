@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
-from components.base import PipelineStep
+from components.base import PipelineStep, load_config
 from components.p1_data_formatting import DataFormat
+from components.p2_sample_processing import SampleProcessing
 
 class SanityStep(PipelineStep):
     def output(self, **kwargs):
@@ -18,10 +19,13 @@ class Show(PipelineStep):
                     print(f"\n== {k}: {getattr(v, 'shape', repr(v)[:200])}")
         return kwargs
 
+config = load_config()
+
 Registered_pipelines: list[PipelineStep] = [
-    SanityStep(),
-    DataFormat(),
-    Show(),
+    SanityStep(config),
+    DataFormat(config),
+    SampleProcessing(config),
+    Show(config),
 ]
 
 def main():
