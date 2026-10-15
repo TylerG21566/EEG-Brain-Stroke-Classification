@@ -75,7 +75,7 @@ CONFIG = {
         
         # Welch PSD per channel: 4 relative band powers + 6 pairwise band ratios + DTABR, spectral mean, 1/f slope (13 × 16 = 208); nperseg = min(win, max_nperseg_s × sfreq), floored at min_nperseg
         # slow / fast: bands summed for DTABR = (delta + theta) / (alpha + beta)
-        "welch": {"enabled": True, 
+        "welch": {"enabled": False, 
                   "features": {"rel": True, "ratio": True, "dtabr": True, "spec_mean": True, "slope": True},
                   "bands": {"delta": (1.0, 4.0), "theta": (4.0, 8.0), "alpha": (8.0, 13.0), "beta": (13.0, 30.0)}, 
                   "window": "hamming", 
@@ -94,7 +94,7 @@ CONFIG = {
         
         
         # regularity entropies per channel (3 × 16 = 48): embedding m, tolerance r × SD, fuzzy exponent n; O(N²), so run on every decim-th sample (250 -> 62.5 Hz, still above the 30 Hz bandpass) in chunks of (epoch, channel) series
-        "entropy": {"enabled": True, 
+        "entropy": {"enabled": False, 
                     "features": {"fuzzy": True, "sample": True, "approx": True}, 
                     "m": 2, 
                     "r": 0.2, 
@@ -105,7 +105,7 @@ CONFIG = {
         
         
         # Morlet time-frequency PNG per subject: freqs (Hz), cycles per wavelet, time decimation, epochs per batch, image dpi
-        "wavelet": {"enabled": True, 
+        "wavelet": {"enabled": False, 
                     "freqs": list(range(1, 31)), 
                     "n_cycles": 6, 
                     "decim": 5, 
