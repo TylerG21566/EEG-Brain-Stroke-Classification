@@ -1,18 +1,20 @@
 from collections import Counter
+from pathlib import Path
+from typing import Any
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold
-from components.base import PipelineStep, resolve
+from components.base import Layer, PipelineStep, resolve
 from components.p3_epoching import combo_dir
 from components.p4_features import EXTRACTORS
 from components.p5_selection import Selection
 
-MINI = [Selection] # per-fold mini-pipeline, fed the training subjects only; p6 (model) goes here next
+MINI: list[type[PipelineStep]] = [Selection] # per-fold mini-pipeline, fed the training subjects only; p6 (model) goes here next
 
-def split_name(stem, suffixes): # "tia_2_bsi" -> ("tia_2", "_bsi"); no known suffix -> shape CSV ("")
+def split_name(stem: str, suffixes: list[str]) -> tuple[str, str]: # "tia_2_bsi" -> ("tia_2", "_bsi"); no known suffix -> shape CSV ("")
     return next(((stem[:-len(s)], s) for s in suffixes if s and stem.endswith(s)), (stem, ""))
 
-def load_combo(folder, keys): # one (duration, overlap) folder -> (subjects × features table, column -> feature class key); only the enabled classes are read
+def load_combo(folder: Path, keys: list[str]) -> tuple[pd.DataFrame, dict[str, str], list[str]]: # one (duration, overlap) folder -> (subjects × features table, column -> feature class key); only the enabled classes are read
     suffixes = sorted({cls.suffix for cls in EXTRACTORS.values()}, key=len, reverse=True)
     wanted = {EXTRACTORS[k].suffix: k for k in keys}
     rows, families = {}, {}
@@ -28,13 +30,13 @@ def load_combo(folder, keys): # one (duration, overlap) folder -> (subjects × f
     missing = sorted(set(wanted.values()) - set(families.values()))
     return X.dropna(axis=0, how="all"), families, missing
 
-def labels(sids, negative): # subtype = subject_id before the last "_" (e.g. ischemic_5 -> ischemic); negative subtypes -> 0, others -> 1
+def labels(sids: list[str] | pd.Index, negative: list[str]) -> np.ndarray: # subtype = subject_id before the last "_" (e.g. ischemic_5 -> ischemic); negative subtypes -> 0, others -> 1
     return np.array([0 if s.rsplit("_", 1)[0] in negative else 1 for s in sids])
 
 class Loader(PipelineStep): # p7: reads p4's CSVs from disk (works without stages 1-4), then per (duration, overlap) runs MINI in subject-level CV
     section = "p7_loader"
 
-    def output(self, **kwargs): # earlier stages' outputs are not needed; they are passed through untouched
+    def output(self, **kwargs: Any) -> Layer: # earlier stages' outputs are not needed; they are passed through untouched
         opts, p4 = self.opts, self.config["p4_features"]
         keys = [k for k in EXTRACTORS if p4[k]["enabled"]]
         extractors = {k: EXTRACTORS[k](p4) for k in keys} # their keep() decides which features p5 may use

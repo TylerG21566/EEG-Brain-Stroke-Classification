@@ -3,13 +3,14 @@ from pathlib import Path
 import mne
 import numpy as np
 import pandas as pd
-from components.base import PipelineStep, resolve
+from typing import Any
+from components.base import Layer, Opts, PipelineStep, resolve
 from components.p0_pipeline_config import Dataset, View
 
 class DataFormat(PipelineStep):
     section = "p1_data_formatting"
 
-    def output(self, **kwargs):
+    def output(self, **kwargs: Any) -> Layer:
         dataset = self.opts["dataset"]
         root = resolve(self.opts["roots"][dataset])
         data = archive(root, self.opts) if dataset == Dataset.ARCHIVE else figshare(root)
@@ -22,7 +23,7 @@ class DataFormat(PipelineStep):
             popup(out, data=data)
         return {**kwargs, "data": data}
 
-def archive(root, opts):
+def archive(root: Path, opts: Opts) -> pd.DataFrame:
     a = opts["archive"]
     name = re.compile(a["name_pattern"])
     rows = []
@@ -35,7 +36,7 @@ def archive(root, opts):
     df.attrs = {"sfreq": a["sfreq"], "channels": a["channel_names"]} # assumed 10-20 order
     return df
 
-def figshare(root):
+def figshare(root: Path) -> pd.DataFrame:
     df = pd.read_csv(root / "metadata" / "participants.tsv", sep="\t").rename(columns={"Participant_ID": "subject_id"})
     df.insert(1, "label", "stroke")
     df.insert(2, "subtype", "ischemic")
@@ -48,7 +49,7 @@ def figshare(root):
     df.attrs = {"sfreq": raw.info["sfreq"], "channels": [c or "trigger" for c in raw.ch_names]}
     return df
 
-def popup(out, **tables):
+def popup(out: Path, **tables: pd.DataFrame) -> None:
     css = "<style>body{font:13px sans-serif}table{border-collapse:collapse}th{position:sticky;top:0;background:#eee}td,th{border:1px solid #ccc;padding:2px 6px}</style>"
     tables = {k: df.map(lambda x: x.shape if isinstance(x, np.ndarray) else x) for k, df in tables.items()}
     out.mkdir(parents=True, exist_ok=True)

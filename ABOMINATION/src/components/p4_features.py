@@ -1,20 +1,22 @@
 import os, time
 from functools import partial
 from multiprocessing import Pool
+from pathlib import Path
+from typing import Any
 import numpy as np
 import pandas as pd
-from components.base import PipelineStep, resolve
-from components.features import AsymmetryFeatures, EntropyFeatures, ShapeFeatures, WaveletFeatures, WelchFeatures
-from components.p3_epoching import combo_dir, load, save_epochs, windows
+from components.base import Combo, Layer, Opts, PipelineStep, resolve
+from components.features import AsymmetryFeatures, EntropyFeatures, FeatureClass, ShapeFeatures, WaveletFeatures, WelchFeatures
+from components.p3_epoching import Task, combo_dir, load, save_epochs, windows
 
-EXTRACTORS = {"shape": ShapeFeatures, "welch": WelchFeatures, "asymmetry": AsymmetryFeatures, "entropy": EntropyFeatures} # config key -> class
-RETURNS = {"shape": "features", "welch": "welch_features", "asymmetry": "asymmetry_features", "entropy": "entropy_features"} # config key -> output key
+EXTRACTORS: dict[str, type[FeatureClass]] = {"shape": ShapeFeatures, "welch": WelchFeatures, "asymmetry": AsymmetryFeatures, "entropy": EntropyFeatures} # config key -> class
+RETURNS: dict[str, str] = {"shape": "features", "welch": "welch_features", "asymmetry": "asymmetry_features", "entropy": "entropy_features"} # config key -> output key
 
-def table(f, names, quantiles): # (n_epochs, n_features) -> percentiles across epochs (NaN when there are no epochs)
+def table(f: np.ndarray, names: list[str], quantiles: list[float]) -> pd.DataFrame: # (n_epochs, n_features) -> percentiles across epochs (NaN when there are no epochs)
     q = np.percentile(f, quantiles, axis=0).T if len(f) else np.full((len(names), len(quantiles)), np.nan)
     return pd.DataFrame(q, index=names, columns=[f"q{p}" for p in quantiles])
 
-def summarise(task, opts, base): # one subject (runs in a worker): load once, then for each combination epochs -> features -> quantiles (+ wavelet PNG)
+def summarise(task: Task, opts: Opts, base: Path) -> tuple[str, dict[Combo, tuple[int, dict[str, pd.DataFrame], float]]]: # one subject (runs in a worker): load once, then for each combination epochs -> features -> quantiles (+ wavelet PNG)
     row, p3, sid = task["row"], task["opts"], task["row"]["subject_id"]
     print(f"[worker {os.getpid()}] start {sid} ({len(task['combinations'])} combinations)", flush=True)
     t0 = time.perf_counter()
@@ -41,7 +43,7 @@ def summarise(task, opts, base): # one subject (runs in a worker): load once, th
 class Features(PipelineStep):
     section = "p4_features"
 
-    def output(self, **kwargs):
+    def output(self, **kwargs: Any) -> Layer:
         opts, processed = self.opts, kwargs["processed"]
         combinations = self.config["p3_epoching"]["combinations"]
         base = resolve(opts["out_dirs"][processed.attrs["dataset"]])
@@ -62,7 +64,7 @@ class Features(PipelineStep):
                     rows[(d, o)][sid] = {suffix: summary.stack() for suffix, summary in tables.items()} # wide row: (feature, quantile) -> value
         for (d, o), dt in secs.items(): # compute time summed over subjects (they run in parallel, so this exceeds wall time)
             print(f"[p4] {d:g} s / {o:g}%: {dt:.2f} s across {len(rows[(d, o)])} subjects")
-        def wide(suffix): # one table per combination: a row per subject, features × len(quantiles) columns
+        def wide(suffix: str) -> dict[Combo, pd.DataFrame]: # one table per combination: a row per subject, features × len(quantiles) columns
             tables = {}
             for (d, o), r in rows.items():
                 df = pd.DataFrame({sid: t[suffix] for sid, t in r.items() if suffix in t}).T

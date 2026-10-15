@@ -1,15 +1,19 @@
+from collections.abc import Iterator
 from functools import partial
 from multiprocessing import Pool
 import mne
 import numpy as np
 import pandas as pd
-from components.base import PipelineStep, resolve
+from typing import Any
+from components.base import Layer, Opts, PipelineStep, resolve
 from components.p0_pipeline_config import Dataset
 
 # per-sample fields kept in the returned "processed" table (signals are saved to the .npz files)
+Sample = dict[str, Any] # one subject: signal (channels, time) + metadata
+
 META = ["subject_id", "label", "subtype", "split", "sfreq", "channels", "eye_regressed", "paths"]
 
-def archive_samples(df): # archive: stitch each subject's 4 s trials into one recording
+def archive_samples(df: pd.DataFrame) -> Iterator[Sample]: # archive: stitch each subject's 4 s trials into one recording
     df = df.sort_values(["split", "label", "subtype", "subject", "file"])
     # rows are sorted by file number, so each group holds one subject's trials in order;
     # concatenating along time (axis=1) joins 50 × (16, 1024) trials into one (16, 51200) ≈ 200 s signal
@@ -18,14 +22,14 @@ def archive_samples(df): # archive: stitch each subject's 4 s trials into one re
         yield {"subject_id": sid, "label": r.label, "subtype": r.subtype, "split": r.split, "signal": np.concatenate(list(g.signal), axis=1),
                "sfreq": df.attrs["sfreq"], "channels": list(df.attrs["channels"]), "paths": list(g.path)}
 
-def figshare_samples(df): # FIgshare: already one continuous EDF per subject, no stitching
+def figshare_samples(df: pd.DataFrame) -> Iterator[Sample]: # FIgshare: already one continuous EDF per subject, no stitching
     for r in df.itertuples():
         yield {"subject_id": r.subject_id, "label": r.label, "subtype": r.subtype, "split": None, "signal": r.signal,
                "sfreq": df.attrs["sfreq"], "channels": list(df.attrs["channels"]), "paths": [r.path]}
 
 SAMPLERS = {Dataset.ARCHIVE: archive_samples, Dataset.FIGSHARE: figshare_samples}
 
-def process(sample, opts): # opts = config["p2_sample_processing"]
+def process(sample: Sample, opts: Opts) -> Sample: # opts = config["p2_sample_processing"]
     sfreq = opts["sfreq"]
     
     # 1. drop EOG + trigger channels
@@ -58,7 +62,7 @@ def process(sample, opts): # opts = config["p2_sample_processing"]
 class SampleProcessing(PipelineStep):
     section = "p2_sample_processing"
 
-    def output(self, **kwargs):
+    def output(self, **kwargs: Any) -> Layer:
         df, opts = kwargs["data"], self.opts
         dataset = df.attrs.get("dataset") or self.config["p1_data_formatting"]["dataset"]
         out = resolve(opts["out_dirs"][dataset])

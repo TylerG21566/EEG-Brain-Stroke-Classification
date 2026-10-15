@@ -1,7 +1,8 @@
 import argparse, time
+from typing import Any
 import numpy as np
 import pandas as pd
-from components.base import PipelineStep, load_config
+from components.base import Layer, PipelineStep, load_config
 from components.p1_data_formatting import DataFormat
 from components.p2_sample_processing import SampleProcessing
 from components.p3_epoching import Epoching
@@ -9,12 +10,12 @@ from components.p4_features import Features
 from components.p7_loader import Loader
 
 class SanityStep(PipelineStep):
-    def output(self, **kwargs):
+    def output(self, **kwargs: Any) -> Layer:
         print("SANITY CHECKKKKK")
         return kwargs
 
 class Show(PipelineStep):
-    def output(self, **kwargs):
+    def output(self, **kwargs: Any) -> Layer:
         with pd.option_context("display.max_columns", None, "display.width", None), np.printoptions(threshold=6, edgeitems=2):
             for k, v in kwargs.items():
                 if isinstance(v, pd.DataFrame):
@@ -36,7 +37,7 @@ Registered_pipelines: dict[int, list[PipelineStep]] = {
 }
 STARTABLE = {0, 7} # stages a run may start from: 0, or 7 (loads p4's CSVs, skipping preprocessing). Others need earlier outputs in memory
 
-def stage_range(argv=None): # parse and check --start / --end -> (start, end)
+def stage_range(argv: list[str] | None = None) -> tuple[int, int]: # parse and check --start / --end -> (start, end)
     last = max(Registered_pipelines)
     ap = argparse.ArgumentParser(description="Run pipeline stages start..end (inclusive).")
     ap.add_argument("-s", "--start", type=int, default=0, help=f"first stage, one of {sorted(STARTABLE)} (default 0)")
@@ -50,7 +51,7 @@ def stage_range(argv=None): # parse and check --start / --end -> (start, end)
         ap.error(f"--start {a.start} is after --end {a.end}")
     return a.start, a.end
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> None:
     start, end = stage_range(argv)
     layer = {}
     t0 = time.perf_counter()
