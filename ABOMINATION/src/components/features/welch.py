@@ -15,12 +15,17 @@ class WelchFeatures: # Welch PSD per channel -> relative band power + pairwise b
         on = w.get("features", {}) # toggles: rel, ratio, dtabr, spec_mean, slope (missing = on)
         kinds = ["rel"] * len(self.bands) + ["ratio"] * len(self.pairs) + EXTRA # per-channel column kinds, in compute order
         self.cols = [i for i, k in enumerate(kinds) if on.get(k, True)]
+        self.kinds_on = {k for k in ["rel", "ratio", *EXTRA] if on.get(k, True)}
         self.fmin, self.fmax = min(lo for lo, _ in self.bands.values()), max(hi for _, hi in self.bands.values()) # 1-30 Hz
 
     def names(self, channels): # per channel: rel for each band, each pairwise ratio, then EXTRA (4 bands -> 13), minus toggled-off ones
         b = list(self.bands)
         per = lambda ch: [f"{ch}_{k}_rel" for k in b] + [f"{ch}_{b[i]}_{b[j]}_ratio" for i, j in self.pairs] + [f"{ch}_{e}" for e in EXTRA]
         return [n for ch in channels for n in np.array(per(ch))[self.cols].tolist()]
+
+    def keep(self, name): # is this feature (e.g. F4_alpha_rel, F4_delta_theta_ratio, F4_spec_mean) switched on in the config?
+        k = "rel" if name.endswith("_rel") else "ratio" if name.endswith("_ratio") else next((e for e in EXTRA if name.endswith(f"_{e}")), None)
+        return k in self.kinds_on
 
     def psd(self, x, sfreq): # (n, ch, win) -> freqs, (n, ch, freqs) limited to [fmin, fmax); one vectorised call
         win = x.shape[-1]

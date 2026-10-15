@@ -6,6 +6,7 @@ from components.p1_data_formatting import DataFormat
 from components.p2_sample_processing import SampleProcessing
 from components.p3_epoching import Epoching
 from components.p4_features import Features
+from components.p7_loader import Loader
 
 class SanityStep(PipelineStep):
     def output(self, **kwargs):
@@ -31,8 +32,9 @@ Registered_pipelines: dict[int, list[PipelineStep]] = {
     2: [SampleProcessing(config), Show(config)],
     3: [Epoching(config)], # lazy: hands p4 one task per subject
     4: [Features(config)], # each task runs every (duration, overlap) in config["p3_epoching"]["combinations"]
+    7: [Loader(config)], # reads p4's CSVs from disk; runs p5 Select (-> p6 Model) inside each CV fold, so 5 and 6 are not stages of their own
 }
-STARTABLE = {0} # stages a run may start from; later stages need earlier outputs in memory (add e.g. 5 once training can load p4's CSVs)
+STARTABLE = {0, 7} # stages a run may start from: 0, or 7 (loads p4's CSVs, skipping preprocessing). Others need earlier outputs in memory
 
 def stage_range(argv=None): # parse and check --start / --end -> (start, end)
     last = max(Registered_pipelines)
@@ -53,7 +55,7 @@ def main(argv=None):
     layer = {}
     t0 = time.perf_counter()
     print(f"[pipeline] stages {start}-{end}", flush=True)
-    for n in range(start, end + 1):
+    for n in sorted(k for k in Registered_pipelines if start <= k <= end):
         for step in Registered_pipelines[n]:
             t = time.perf_counter()
             layer = step.output(**layer)

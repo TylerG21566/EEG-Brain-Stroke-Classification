@@ -45,6 +45,9 @@ class EntropyFeatures: # regularity entropies per channel: fuzzy (Tong 2025), sa
     def names(self, channels): # e.g. F4_fuzzyen
         return [f"{ch}_{NAMES[k]}" for ch in channels for k in self.on]
 
+    def keep(self, name): # is this feature (e.g. F4_fuzzyen) switched on in the config?
+        return name.rsplit("_", 1)[-1] in {NAMES[k] for k in self.on}
+
     def compute(self, x, sfreq, clip): # (n, ch, win) -> (n, ch * enabled); O(win²) per series, so decimated and run in chunks
         n, ch, _ = x.shape
         if n == 0 or not self.on:

@@ -7,9 +7,10 @@ Run from `ABOMINATION/` with the venv set up (see the top-level README).
 ```bash
 .venv/bin/python src/pipeline.py                 # all stages
 .venv/bin/python src/pipeline.py --start 0 --end 2 # stages 0-2 only (also -s / -e)
+.venv/bin/python src/pipeline.py -s 7 -e 7         # modelling only, from p4's CSVs on disk
 ```
 
-Stages are numbered in `Registered_pipelines` in `pipeline.py` (0 sanity, 1–4 = p1–p4). `--end` must be a stage and `--start <= --end`; `--start` must be in `STARTABLE` (only 0 for now, since later stages need earlier outputs in memory). Steps run in order; each step's `output(**kwargs)` returns a dict that is passed to the next step. p2 drops p1's raw signals (`data`) once they are on disk.
+Stages are numbered in `Registered_pipelines` in `pipeline.py` (0 sanity, 1–4 = p1–p4, 7 = p7; p5/p6 run inside p7). `--end` must be a stage and `--start <= --end`; `--start` must be in `STARTABLE` (0, or 7 which reads p4's CSVs from disk). Steps run in order; each step's `output(**kwargs)` returns a dict that is passed to the next step. p2 drops p1's raw signals (`data`) once they are on disk.
 
 Notes:
 
@@ -48,9 +49,9 @@ Options live in `components/p0_pipeline_config.py`: a plain Python dict (`CONFIG
 | p2 Preprocess | Stitch, resample 250 Hz, CAR, bandpass 1–30 Hz, FP1/FP2 eye regression; one `.npz` per subject |
 | p3 Epoch | Sliding window (duration × overlap); z-score per epoch, clip ±20 SD |
 | p4 Features | Per-epoch shape features (skew, kurtosis, entropy × 16 = 48) + Welch band features (4 relative powers + 6 ratios + DTABR, spectral mean, 1/f slope × 16 = 208) + BSI per left/right pair (8 + mean = 9) + fuzzy / sample / approximate entropy (× 16 = 48) → q10/25/50/75/90 across epochs, one quantile CSV per subject each; Morlet wavelet TF PNG per subject |
-| p5 Select | Top 30 features by mutual information |
-| p6 Model | XGBoost, fixed hyperparameters, `scale_pos_weight` = neg/pos |
-| p7 Evaluate | Subject-level stratified 5-fold CV × 50 repeats (AUC) + 32/8 holdout, threshold 0.5 |
+| p5 Select | Top k (30) by mutual information or ANOVA, on each fold's training subjects, only over features enabled in `p4_features`; prints them |
+| p6 Model | *Planned:* XGBoost, fixed hyperparameters, `scale_pos_weight` = neg/pos |
+| p7 Loader | Loads p4's CSVs (enabled classes only), labels subjects (`negative` subtypes = 0), runs the p5 → (p6) mini-pipeline per stratified subject-level fold; returns `selection` with per-fold choices and selection frequency. *Planned:* AUC, permutation test |
 
-- p5–p6 are fitted inside each CV fold, so p7 calls them per fold rather than them running once in the chain.
+- p5–p6 are fitted inside each CV fold (`MINI` in `p7_loader.py`), so p7 calls them per fold rather than them running once in the chain; p5 never sees test subjects or p4's in-memory output.
 - p3–p7 repeat per duration × overlap combination; p1–p2 run once and are reused.

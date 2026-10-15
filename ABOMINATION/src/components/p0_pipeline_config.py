@@ -13,6 +13,10 @@ class View(StrEnum): # p1 debug popup
     TABLES = "tables"  # full p1 tables in browser
     NPY = "npy"  # first recording only
 
+class Selector(StrEnum): # p5 feature scoring
+    MUTUAL_INFO = "mutual_info"  # sklearn mutual_info_classif (Tamim's SelectKBest choice)
+    ANOVA = "anova"  # sklearn f_classif: fast, linear separation only
+
 CONFIG = {
     "paths": {
         "data": "data",
@@ -122,5 +126,18 @@ CONFIG = {
         
         
         "debug": False,  # True: print the first subject's summary
+    },
+    "p5_selection": {  # runs inside p7, on each fold's training subjects only; considers only features switched on in p4_features
+        "method": Selector.MUTUAL_INFO,  # Selector.MUTUAL_INFO | Selector.ANOVA
+        "k": 30,  # keep the top k features (capped at the number available)
+        "seed": 0,  # random_state for mutual information
+        "debug": True,  # True: print each fold's chosen features
+    },
+    "p7_loader": {  # loads p4's CSVs from disk (so it can run without stages 1-4) and runs p5 (-> p6) in subject-level CV per (duration, overlap)
+        "folds": 5,  # stratified folds over subjects
+        "repeats": 1,  # CV repeats with different shuffles (Tamim used 50)
+        "seed": 0,  # shuffle seed for repeat 0 (repeat r uses seed + r)
+        "negative": ["normal"],  # subtypes labelled 0; everything else is 1 (stroke). Subtype = subject_id before the last "_"
+        "debug": False,  # True: print each subject table's shape and label counts
     },
 }

@@ -23,6 +23,9 @@ class ShapeFeatures: # skew, kurtosis, histogram entropy per channel -> 3 × cha
     def names(self, channels): # e.g. F4_kurtosis
         return [f"{ch}_{k}" for ch in channels for k in self.on]
 
+    def keep(self, name): # is this feature (e.g. F4_kurtosis) switched on in the config?
+        return name.rsplit("_", 1)[-1] in self.on
+
     def compute(self, x, sfreq, clip): # (n_epochs, channels, win) -> (n_epochs, enabled × channels); sfreq unused
         if not len(x):
             return np.empty((0, x.shape[1] * len(self.on)))

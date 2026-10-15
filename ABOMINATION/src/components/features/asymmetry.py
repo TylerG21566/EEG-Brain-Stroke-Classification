@@ -15,6 +15,9 @@ class AsymmetryFeatures: # Brain Symmetry Index per left/right pair: mean over 1
         self.idx = [(up.index(l.upper()), up.index(r.upper())) for l, r in found]
         return [f"{l}_{r}_bsi" for l, r in found] * self.on_pairs + ["mean_bsi"] * (self.on_mean and bool(found))
 
+    def keep(self, name): # is this feature (e.g. C3_C4_bsi, mean_bsi) switched on in the config?
+        return self.on_mean if name == "mean_bsi" else self.on_pairs and name.endswith("_bsi")
+
     def compute(self, x, sfreq, clip): # (n, ch, win) -> (n, pairs + 1); call names() first; clip is unused
         k = len(self.idx) * self.on_pairs + (self.on_mean and bool(self.idx))
         if len(x) == 0 or not k:
