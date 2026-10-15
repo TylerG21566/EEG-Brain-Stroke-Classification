@@ -57,6 +57,8 @@ def main(argv: list[str] | None = None) -> None:
     t0 = time.perf_counter()
     print(f"[pipeline] stages {start}-{end}", flush=True)
     for n in sorted(k for k in Registered_pipelines if start <= k <= end):
+        if n in STARTABLE: # entry points (0, 7) never receive earlier stages' outputs, so 5-7 are decoupled from preprocessing
+            layer = {}
         for step in Registered_pipelines[n]:
             t = time.perf_counter()
             layer = step.output(**layer)

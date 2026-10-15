@@ -1,7 +1,7 @@
 import numpy as np, pandas as pd, pytest
 import components.p0_pipeline_config as p0
-from components.p3_epoching import combo_dir
-from components.p4_features import EXTRACTORS
+from components.base import combo_dir
+from components.features import FEATURE_CLASSES as EXTRACTORS
 from components.p5_selection import Selection
 from components.p7_loader import Loader, labels, split_name
 

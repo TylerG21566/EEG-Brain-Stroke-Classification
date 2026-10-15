@@ -17,6 +17,9 @@ def load_config() -> Config: # deep copy so callers (tests, steps) can mutate fr
 def resolve(p: str | Path) -> Path: # absolute paths (e.g. tmp dirs in tests) pass through unchanged
     return ROOT / p
 
+def combo_dir(out_dir: str | Path, duration: float, overlap: float) -> Path: # e.g. out/p4/Archive/4s/50pct; the folder layout p3/p4 write and p7 reads
+    return Path(out_dir) / f"{duration:g}s" / f"{overlap:g}pct"
+
 class PipelineStep(ABC):
     section: str | None = None # this step's key in the config
 

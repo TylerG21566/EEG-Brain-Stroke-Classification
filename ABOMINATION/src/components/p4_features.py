@@ -5,11 +5,11 @@ from pathlib import Path
 from typing import Any
 import numpy as np
 import pandas as pd
-from components.base import Combo, Layer, Opts, PipelineStep, resolve
-from components.features import AsymmetryFeatures, EntropyFeatures, FeatureClass, ShapeFeatures, WaveletFeatures, WelchFeatures
-from components.p3_epoching import Task, combo_dir, load, save_epochs, windows
+from components.base import Combo, Layer, Opts, PipelineStep, combo_dir, resolve
+from components.features import FEATURE_CLASSES, WaveletFeatures
+from components.p3_epoching import Task, load, save_epochs, windows
 
-EXTRACTORS: dict[str, type[FeatureClass]] = {"shape": ShapeFeatures, "welch": WelchFeatures, "asymmetry": AsymmetryFeatures, "entropy": EntropyFeatures} # config key -> class
+EXTRACTORS = FEATURE_CLASSES # config key -> class
 RETURNS: dict[str, str] = {"shape": "features", "welch": "welch_features", "asymmetry": "asymmetry_features", "entropy": "entropy_features"} # config key -> output key
 
 def table(f: np.ndarray, names: list[str], quantiles: list[float]) -> pd.DataFrame: # (n_epochs, n_features) -> percentiles across epochs (NaN when there are no epochs)

@@ -4,7 +4,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from numpy.lib.stride_tricks import sliding_window_view
-from components.base import Combo, Layer, Opts, PipelineStep, resolve
+from components.base import Combo, Layer, Opts, PipelineStep, combo_dir, resolve
 
 Row = dict[str, Any] # one row of p2's "processed" table
 Epoch = dict[str, Any] # one epoch: signal (channels, win) + metadata
@@ -12,9 +12,6 @@ Task = dict[str, Any] # one subject's work for p4: row, combinations, opts, out
 
 def epoch_name(e: Epoch) -> str: # e.g. ischemic_5_e0003_t0012.00s
     return f"{e['subject_id']}_e{e['epoch']:04d}_t{e['start']:07.2f}s"
-
-def combo_dir(out_dir: str | Path, duration: float, overlap: float) -> Path: # e.g. out/p3/Archive/4s/50pct
-    return Path(out_dir) / f"{duration:g}s" / f"{overlap:g}pct"
 
 def load(row: Row) -> np.ndarray: # one subject's p2 signal (channels, time)
     with np.load(row["file"]) as z:

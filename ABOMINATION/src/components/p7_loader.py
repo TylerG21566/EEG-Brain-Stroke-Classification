@@ -4,9 +4,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold
-from components.base import Layer, PipelineStep, resolve
-from components.p3_epoching import combo_dir
-from components.p4_features import EXTRACTORS
+from components.base import Layer, PipelineStep, combo_dir, resolve
+from components.features import FEATURE_CLASSES as EXTRACTORS # no p3/p4 imports: p7 only shares the config and the CSV layout on disk
 from components.p5_selection import Selection
 
 MINI: list[type[PipelineStep]] = [Selection] # per-fold mini-pipeline, fed the training subjects only; p6 (model) goes here next
@@ -36,7 +35,7 @@ def labels(sids: list[str] | pd.Index, negative: list[str]) -> np.ndarray: # sub
 class Loader(PipelineStep): # p7: reads p4's CSVs from disk (works without stages 1-4), then per (duration, overlap) runs MINI in subject-level CV
     section = "p7_loader"
 
-    def output(self, **kwargs: Any) -> Layer: # earlier stages' outputs are not needed; they are passed through untouched
+    def output(self, **kwargs: Any) -> Layer: # starts a fresh layer (see pipeline.main), so kwargs is empty; everything comes from disk + config
         opts, p4 = self.opts, self.config["p4_features"]
         keys = [k for k in EXTRACTORS if p4[k]["enabled"]]
         extractors = {k: EXTRACTORS[k](p4) for k in keys} # their keep() decides which features p5 may use

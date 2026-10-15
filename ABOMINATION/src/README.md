@@ -10,7 +10,7 @@ Run from `ABOMINATION/` with the venv set up (see the top-level README).
 .venv/bin/python src/pipeline.py -s 7 -e 7         # modelling only, from p4's CSVs on disk
 ```
 
-Stages are numbered in `Registered_pipelines` in `pipeline.py` (0 sanity, 1–4 = p1–p4, 7 = p7; p5/p6 run inside p7). `--end` must be a stage and `--start <= --end`; `--start` must be in `STARTABLE` (0, or 7 which reads p4's CSVs from disk). Steps run in order; each step's `output(**kwargs)` returns a dict that is passed to the next step. p2 drops p1's raw signals (`data`) once they are on disk.
+Stages are numbered in `Registered_pipelines` in `pipeline.py` (0 sanity, 1–4 = p1–p4, 7 = p7; p5/p6 run inside p7). `--end` must be a stage and `--start <= --end`; `--start` must be in `STARTABLE` (0, or 7 which reads p4's CSVs from disk). Steps run in order; each step's `output(**kwargs)` returns a dict that is passed to the next step. Startable stages always begin with an empty dict, so p7 (and the p5/p6 inside it) never sees p1–p4's outputs: the only links are the config and p4's CSVs on disk. p2 drops p1's raw signals (`data`) once they are on disk.
 
 Notes:
 

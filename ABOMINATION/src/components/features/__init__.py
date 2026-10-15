@@ -12,3 +12,5 @@ from components.features.welch import WelchFeatures
 from components.features.wavelet import WaveletFeatures
 from components.features.asymmetry import AsymmetryFeatures
 from components.features.entropy import EntropyFeatures
+
+FEATURE_CLASSES: dict[str, type[FeatureClass]] = {"shape": ShapeFeatures, "welch": WelchFeatures, "asymmetry": AsymmetryFeatures, "entropy": EntropyFeatures} # config key in p4_features -> class
