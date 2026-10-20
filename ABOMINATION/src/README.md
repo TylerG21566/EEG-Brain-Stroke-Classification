@@ -17,7 +17,7 @@ Notes:
 - p3 is lazy: its `subjects` output is a generator of small per-subject tasks; nothing is computed until p4's workers run them.
 - Each p4 worker loads one subject's p2 signal once and runs every `(duration, overlap)` in `config["p3_epoching"]["combinations"]`: all epochs are cut as one array (`windows`), then features are computed in single vectorised calls.
 - p3 only writes epoch files when its `"debug"` is `True`, to `out/p3/<Dataset>/<duration>s/<overlap>pct/<subject>_e<idx>_t<start>s.npy`.
-- p4 computes skew, kurtosis and Shannon entropy per channel for each epoch (3 × channels; 48 for the archive), then the 10/25/50/75/90th percentiles across the subject's epochs (240 values). Writes `out/p4/<Dataset>/<duration>s/<overlap>pct/<subject>.csv` (rows = features, columns = quantiles) and returns `features`: `{(duration, overlap): table with one row per subject}`; Welch band features go to `<subject>_welch.csv` / `welch_features` and left/right BSI to `<subject>_bsi.csv` / `asymmetry_features` likewise, plus a wavelet TF `<subject>.png`. Extractors live in `components/features/`. Each class (`shape`, `welch`, `asymmetry`, `entropy`, `wavelet`) has an `enabled` flag in `config["p4_features"]`, and the first three a `features` dict that toggles single features; a disabled class writes no CSV/PNG and its output key is absent.
+- p4 computes skew, kurtosis and Shannon entropy per channel for each epoch (3 × channels; 48 for the archive, 57 for TUH), then the 10/25/50/75/90th percentiles across the subject's epochs (240 values). Writes `out/p4/<Dataset>/<duration>s/<overlap>pct/<subject>.csv` (rows = features, columns = quantiles) and returns `features`: `{(duration, overlap): table with one row per subject}`; Welch band features go to `<subject>_welch.csv` / `welch_features` and left/right BSI to `<subject>_bsi.csv` / `asymmetry_features` likewise, plus a wavelet TF `<subject>.png`. Extractors live in `components/features/`. Each class (`shape`, `welch`, `asymmetry`, `entropy`, `wavelet`) has an `enabled` flag in `config["p4_features"]`, and the first three a `features` dict that toggles single features; a disabled class writes no CSV/PNG and its output key is absent.
 - Worker pools (p2, p4) use every CPU core (`os.cpu_count()`).
 
 ## Config
@@ -45,13 +45,27 @@ Options live in `components/p0_pipeline_config.py`: a plain Python dict (`CONFIG
 
 | Stage | What it does |
 |---|---|
-| p1 Load | Raw trials / EDFs into a table: signal, label, subtype, split |
+| p1 Load | Raw trials / EDFs into a table: signal, label, subtype, split (TUH: one row per subject from the headers db, signal read later in p2) |
 | p2 Preprocess | Stitch, resample 250 Hz, CAR, bandpass 1–30 Hz, FP1/FP2 eye regression; one `.npz` per subject |
 | p3 Epoch | Sliding window (duration × overlap); z-score per epoch, clip ±20 SD |
-| p4 Features | Per-epoch shape features (skew, kurtosis, entropy × 16 = 48) + Welch band features (4 relative powers + 6 ratios + DTABR, spectral mean, 1/f slope × 16 = 208) + BSI per left/right pair (8 + mean = 9) + fuzzy / sample / approximate entropy (× 16 = 48) → q10/25/50/75/90 across epochs, one quantile CSV per subject each; Morlet wavelet TF PNG per subject |
+| p4 Features | Per-epoch shape features (skew, kurtosis, entropy × channels: 48 archive, 57 TUH) + Welch band features (4 relative powers + 6 ratios + DTABR, spectral mean, 1/f slope × channels: 208 archive, 247 TUH) + BSI per left/right pair (8 + mean = 9) + fuzzy / sample / approximate entropy (× channels: 48 archive, 57 TUH) → q10/25/50/75/90 across epochs, one quantile CSV per subject each; Morlet wavelet TF PNG per subject |
 | p5 Select | Top k (30) by mutual information or ANOVA, on each fold's training subjects, only over features enabled in `p4_features`; prints them |
 | p6 Model | *Planned:* XGBoost, fixed hyperparameters, `scale_pos_weight` = neg/pos |
 | p7 Loader | Loads p4's CSVs (enabled classes only), labels subjects (`negative` subtypes = 0), runs the p5 → (p6) mini-pipeline per stratified subject-level fold; returns `selection` with per-fold choices and selection frequency. *Planned:* AUC, permutation test |
 
 - p5–p6 are fitted inside each CV fold (`MINI` in `p7_loader.py`), so p7 calls them per fold rather than them running once in the chain; p5 never sees test subjects or p4's in-memory output.
 - p3–p7 repeat per duration × overlap combination; p1–p2 run once and are reused.
+
+## TUH data
+
+`scripts/download_tuh.py` fetches labelled TUH EEG (TUEG v2.0.2) recordings over rsync/SSH (needs NEDC access and `~/.ssh/id_ed25519`). The selection comes from the headers db (`recordings` table, `label` = stroke/healthy); files land at `<root>/<edf_path without "../">`. `--db` / `--root` default to `p1_data_formatting.tuh.db_path` / `roots.tuh` in the config.
+
+```bash
+.venv/bin/python scripts/download_tuh.py --dry-run                  # count, hours, already-present, rsync --stats size (~10.8 GB for longest)
+.venv/bin/python scripts/download_tuh.py --limit-subjects 2         # small sample: 2 subjects per label
+.venv/bin/python scripts/download_tuh.py                            # longest labelled recording per subject (337 files)
+.venv/bin/python scripts/download_tuh.py --which all --label stroke # every labelled stroke recording
+```
+
+- `--which longest` (default) matches the p1 loader: max `duration_s` per subject, ties by session, token, path.
+- Re-running skips files already downloaded (rsync); `--host`, `--base`, `--key` override the remote.

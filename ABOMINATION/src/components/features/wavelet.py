@@ -26,13 +26,16 @@ class WaveletFeatures: # Morlet time-frequency maps -> one PNG per subject per (
         db = 10 * np.log10(mean_power(x, sfreq, freqs, o["n_cycles"], o["decim"], o["chunk"]) + np.finfo(float).tiny) # (ch, freqs, times)
         t = np.arange(db.shape[-1]) * o["decim"] / sfreq # time within epoch (s)
         vmin, vmax = db.min(), db.max() # one colour scale across channels
-        n = math.ceil(math.sqrt(len(channels))) # n × n grid, e.g. 4 × 4 for 16 channels
-        fig, axes = plt.subplots(n, n, figsize=(3 * n, 2.4 * n), sharex=True, sharey=True, squeeze=False, constrained_layout=True)
+        cols = math.ceil(math.sqrt(len(channels))) # near-square grid: 4 × 4 for 16 channels, 4 rows × 5 for TUH's 19
+        rows = math.ceil(len(channels) / cols)
+        fig, axes = plt.subplots(rows, cols, figsize=(3 * cols, 2.4 * rows), sharex=True, sharey=True, squeeze=False, constrained_layout=True)
         for ax, ch, p in zip(axes.flat, channels, db):
             mesh = ax.pcolormesh(t, freqs, p, shading="auto", vmin=vmin, vmax=vmax, cmap="viridis")
             ax.set_title(ch, fontsize=9)
-        for ax in axes.flat[len(channels):]: # unused panels
-            ax.set_visible(False)
+        for i in range(len(channels), rows * cols): # unused panels; the one above each gets the x axis labels
+            axes.flat[i].set_visible(False)
+            axes.flat[i - cols].tick_params(labelbottom=True)
+            axes.flat[i - cols].set_xlabel("time in epoch (s)")
         for ax in axes[-1]:
             ax.set_xlabel("time in epoch (s)")
         for ax in axes[:, 0]:

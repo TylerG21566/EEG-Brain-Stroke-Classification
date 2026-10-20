@@ -27,22 +27,39 @@ def figshare_samples(df: pd.DataFrame) -> Iterator[Sample]: # FIgshare: already 
         yield {"subject_id": r.subject_id, "label": r.label, "subtype": r.subtype, "split": None, "signal": r.signal,
                "sfreq": df.attrs["sfreq"], "channels": list(df.attrs["channels"]), "paths": [r.path]}
 
-SAMPLERS = {Dataset.ARCHIVE: archive_samples, Dataset.FIGSHARE: figshare_samples}
+def tuh_samples(df: pd.DataFrame) -> Iterator[Sample]: # TUH: one EDF per subject; signal None, read inside the worker (load()) so only `processes` recordings are in memory at once
+    for r in df.itertuples(): # sfreq per row (250 / 256 / 400 / 1000 Hz)
+        yield {"subject_id": r.subject_id, "label": r.label, "subtype": r.subtype, "split": r.split, "signal": None, "sfreq": float(r.sfreq),
+               "channels": list(df.attrs["channels"]), "paths": [r.path], "electrodes": list(df.attrs["electrodes"]), "references": list(df.attrs["references"])}
+
+SAMPLERS = {Dataset.ARCHIVE: archive_samples, Dataset.FIGSHARE: figshare_samples, Dataset.TUH: tuh_samples}
+
+def read_tuh(path: str, electrodes: list[str], references: list[str]) -> tuple[np.ndarray, float]: # module-level so tests can patch it; workers import components.tuh only when TUH runs
+    from components.tuh import read_tuh
+    return read_tuh(path, electrodes, references)
+
+def load(sample: Sample) -> Sample: # lazy samples (TUH): read the EDF -> (19, T) µV in the configured channel order + its own sfreq
+    x, sfreq = read_tuh(sample["paths"][0], sample["electrodes"], sample["references"])
+    if x.shape[0] != len(sample["channels"]):
+        raise ValueError(f"{sample['paths'][0]}: read {x.shape[0]} channels, expected {len(sample['channels'])} ({sample['channels']})")
+    return {**sample, "signal": x, "sfreq": float(sfreq)}
 
 def process(sample: Sample, opts: Opts) -> Sample: # opts = config["p2_sample_processing"]
     sfreq = opts["sfreq"]
+    if sample["signal"] is None: # TUH: load here, in the worker
+        sample = load(sample)
     
-    # 1. drop EOG + trigger channels
+    # 1. drop EOG + trigger channels (TUH has none: read_tuh returns exactly the 19 EEG electrodes, so CAR below uses those 19)
     non_eeg = {c.upper() for c in opts["non_eeg"]}
     keep = [i for i, c in enumerate(sample["channels"]) if c.upper() not in non_eeg]
     chans = [sample["channels"][i] for i in keep]
     x = np.asarray(sample["signal"], dtype=np.float64)[keep]
     
-    # 2. resample to sfreq (250 Hz)
+    # 2. resample to sfreq (250 Hz) from this sample's own rate; polyphase: exact rational ratio (e.g. 256 -> 250 = 125/128), no FFT padding drift, low memory on hour-long EDFs
     if sample["sfreq"] != sfreq:
-        x = mne.filter.resample(x, up=sfreq, down=sample["sfreq"], verbose=False)
+        x = mne.filter.resample(x, up=sfreq, down=sample["sfreq"], method="polyphase", verbose=False)
         
-    # 3. CAR: subtract the mean across channels at each time point
+    # 3. CAR: subtract the mean across channels at each time point (also removes TUH's REF vs LE montage difference: a reference is a common-mode signal)
     x = x - x.mean(axis=0)
     
     # 4. bandpass l_freq-h_freq (1-30 Hz)
@@ -70,7 +87,7 @@ class SampleProcessing(PipelineStep):
         for f in out.glob("*.npz"): # delete old outputs before starting
             f.unlink()
         rows = []
-        with Pool(opts["processes"]) as pool: # workers pull samples lazily from the generator, in order
+        with Pool(opts["processes"]) as pool: # results come back in order; imap queues every sample up front (TUH samples carry no signal, so they are tiny)
             for s in pool.imap(partial(process, opts=opts), SAMPLERS[dataset](df)):
                 f = out / f"{s['subject_id']}.npz" # one file per subject, e.g. ischemic_5.npz / sub-01.npz
                 np.savez(f, signal=s["signal"])

@@ -57,7 +57,7 @@ class Features(PipelineStep):
             for sid, results in pool.imap(partial(summarise, opts=opts, base=base), kwargs["subjects"]):
                 for (d, o), (n, tables, dt) in results.items():
                     secs[(d, o)] += dt
-                    for suffix, summary in tables.items(): # e.g. <sid>.csv (48 shape), <sid>_welch.csv (208 band), <sid>_bsi.csv (9 asymmetry), <sid>_entropy.csv (48 regularity) × quantiles
+                    for suffix, summary in tables.items(): # e.g. <sid>.csv (3 shape × channels), <sid>_welch.csv (13 band × channels), <sid>_bsi.csv (pairs + mean = 9), <sid>_entropy.csv (3 regularity × channels) × quantiles
                         summary.to_csv(combo_dir(base, d, o) / f"{sid}{suffix}.csv", index_label="feature")
                         if opts["debug"] and not rows[(d, o)]:
                             print(f"\n== p4 first subject {sid}{suffix} @ {d:g} s / {o:g}%: {n} epochs\n{summary}")

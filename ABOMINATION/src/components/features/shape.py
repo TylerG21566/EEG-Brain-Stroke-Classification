@@ -2,7 +2,7 @@ import numpy as np
 from scipy.stats import kurtosis, skew
 from components.base import Opts
 
-FEATURES = ["skew", "kurtosis", "entropy"] # per channel, so 3 × 16 = 48 per epoch
+FEATURES = ["skew", "kurtosis", "entropy"] # per channel, so 3 × channels per epoch
 
 def entropy(x: np.ndarray, bins: int, clip: float) -> np.ndarray: # Shannon entropy (bits) of each channel's value histogram over [-clip, clip]; x: (..., win)
     idx = np.clip(((x + clip) * (bins / (2 * clip))).astype(np.int64), 0, bins - 1) # bin index per sample

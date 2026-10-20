@@ -6,6 +6,7 @@ import pandas as pd
 from typing import Any
 from components.base import Layer, Opts, PipelineStep, resolve
 from components.p0_pipeline_config import Dataset, View
+from components.tuh import labelled_recordings, read_tuh
 
 class DataFormat(PipelineStep):
     section = "p1_data_formatting"
@@ -13,12 +14,13 @@ class DataFormat(PipelineStep):
     def output(self, **kwargs: Any) -> Layer:
         dataset = self.opts["dataset"]
         root = resolve(self.opts["roots"][dataset])
-        data = archive(root, self.opts) if dataset == Dataset.ARCHIVE else figshare(root)
+        data = {Dataset.ARCHIVE: archive, Dataset.FIGSHARE: lambda r, _: figshare(r), Dataset.TUH: tuh}[dataset](root, self.opts)
         data.attrs["dataset"] = dataset
         view, out = self.opts["debug_view"], resolve(self.opts["debug_dir"])
         if view == View.NPY:
-            signal = data.signal[0][:, :self.opts["view_samples"]]
-            popup(out, **{Path(data.path[0]).name: pd.DataFrame(signal.T, columns=data.attrs["channels"], index=np.arange(signal.shape[1]) / data.attrs["sfreq"])})
+            signal, sfreq = (data.signal[0], data.attrs["sfreq"]) if data.signal[0] is not None else read_tuh(data.path[0], data.attrs["electrodes"], data.attrs["references"]) # TUH: read on demand
+            signal = signal[:, :self.opts["view_samples"]]
+            popup(out, **{Path(data.path[0]).name: pd.DataFrame(signal.T, columns=data.attrs["channels"], index=np.arange(signal.shape[1]) / sfreq)})
         elif view == View.TABLES:
             popup(out, data=data)
         return {**kwargs, "data": data}
@@ -47,6 +49,24 @@ def figshare(root: Path) -> pd.DataFrame:
         rows.append({"signal": raw.get_data(units="uV").astype(np.float32), "path": str(p)})
     df = df.join(pd.DataFrame(rows))
     df.attrs = {"sfreq": raw.info["sfreq"], "channels": [c or "trigger" for c in raw.ch_names]}
+    return df
+
+def tuh(root: Path, opts: Opts) -> pd.DataFrame:
+    t = opts["tuh"]
+    df = labelled_recordings(resolve(t["db_path"]))
+    subtype = df.label.map(t["labels"])
+    df = pd.DataFrame({"subject_id": subtype + "_" + df.patient, "label": df.label, "subtype": subtype, "split": None, "patient": df.patient, "session": df.session,
+                       "token": df.token, "sfreq": df.sample_frequency, "montage": df.montage, "age": df.age, "gender": df.gender, "signal": None,
+                       "path": [str(root / p) for p in df.edf_path]}) # signals stay on disk: p2 workers read them with read_tuh (all at once would be ~8 GB)
+    on_disk = df.path.map(lambda p: Path(p).exists())
+    if not on_disk.all():
+        if not t["skip_missing"]:
+            raise FileNotFoundError(f"{(~on_disk).sum()} TUH EDFs missing under {root}, e.g. {df.path[~on_disk].iloc[0]}; run scripts/download_tuh.py")
+        print(f"p1 TUH: skipped {(~on_disk).sum()} of {len(df)} subjects (EDF not on disk), {on_disk.sum()} remain {df[on_disk].label.value_counts().to_dict()}")
+    if not on_disk.any():
+        raise FileNotFoundError(f"no TUH EDFs found under {root}; run scripts/download_tuh.py first")
+    df = df[on_disk].reset_index(drop=True)
+    df.attrs = {"sfreq": None, "channels": list(t["electrodes"]), "electrodes": list(t["electrodes"]), "references": list(t["references"])} # sfreq varies per row (250/256/400/1000 Hz)
     return df
 
 def popup(out: Path, **tables: pd.DataFrame) -> None:
