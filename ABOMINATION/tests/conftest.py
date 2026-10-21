@@ -16,6 +16,7 @@ def cfg(tmp_path):  # fresh config per test: no popups, all paths under tmp_path
     c["p2_sample_processing"]["out_dirs"] = {k: str(tmp_path / "out") for k in c["p2_sample_processing"]["out_dirs"]}
     c["p4_features"]["out_dirs"] = {k: str(tmp_path / "p4") for k in c["p4_features"]["out_dirs"]}
     c["p3_epoching"]["out_dirs"] = {k: str(tmp_path / "p3") for k in c["p3_epoching"]["out_dirs"]}
+    c["p7_loader"]["out_dirs"] = {k: str(tmp_path / "p7") for k in c["p7_loader"]["out_dirs"]}
     for k in ("shape", "welch", "asymmetry", "entropy", "wavelet"):  # test every feature class, whatever the config toggles say
         c["p4_features"][k]["enabled"] = True
     return c

@@ -18,6 +18,9 @@ class Selector(StrEnum): # p5 feature scoring
     MUTUAL_INFO = "mutual_info"  # sklearn mutual_info_classif (Tamim's SelectKBest choice)
     ANOVA = "anova"  # sklearn f_classif: fast, linear separation only
 
+class ModelName(StrEnum): # p6 classifier; add RNN etc. here as new folders in components/models/
+    XGBOOST = "xgboost"  # gradient-boosted trees (Tamim §4.7.1)
+
 CONFIG = {
     "paths": {
         "data": "data",
@@ -76,7 +79,7 @@ CONFIG = {
         "debug": False,  # True: write every epoch to out_dirs as it is generated
     },
     "p4_features": {  # per-epoch features -> per-subject quantile summary
-        "processes": os.cpu_count(),  # worker pool size (all cores; one subject per task)
+        "processes": os.cpu_count()//2,  # worker pool size (all cores; one subject per task)
         "quantiles": [10, 25, 50, 75, 90],  # percentiles of each feature across a subject's epochs
         
         
@@ -140,16 +143,41 @@ CONFIG = {
         "debug": False,  # True: print the first subject's summary
     },
     "p5_selection": {  # runs inside p7, on each fold's training subjects only; considers only features switched on in p4_features
-        "method": Selector.ANOVA,  # Selector.MUTUAL_INFO | Selector.ANOVA; TEMP: ANOVA for the 4-subject TUH sample (MI fails with 1 subject per class) -> back to MUTUAL_INFO after the full download
+        "method": Selector.MUTUAL_INFO,  # Selector.MUTUAL_INFO | Selector.ANOVA
         "k": 30,  # keep the top k features (capped at the number available)
         "seed": 0,  # random_state for mutual information
         "debug": True,  # True: print each fold's chosen features
     },
+    "p6_model": {  # runs inside p7 after p5, on each fold's chosen features; fitted on training subjects only, scores the test subjects
+        "model": ModelName.XGBOOST,  # ModelName.XGBOOST; its hyperparameters are the sub-dict of the same name below
+        "threshold": 0.5,  # P(stroke) >= threshold -> 1
+        "debug": False,  # True: print each fold's train/test sizes and test scores
+        "xgboost": {  # fixed hyperparameters (no tuning), Tamim §4.7.1 Table 4.3
+            "n_estimators": 60,  # boosting rounds
+            "max_depth": 2,  # depth of each tree
+            "learning_rate": 0.04,  # shrinkage per round
+            "reg_lambda": 20.0,  # L2 penalty on leaf weights
+            "reg_alpha": 1.0,  # L1 penalty on leaf weights
+            "gamma": 0.1,  # min loss reduction to split
+            "subsample": 1.0,  # rows sampled per tree
+            "colsample_bytree": 0.7,  # features sampled per tree
+            "min_child_weight": 1,  # min hessian sum per leaf
+            "scale_pos_weight": "auto",  # "auto" = neg/pos of each fold's training subjects; or a number
+            "seed": 0,  # random_state
+            "n_jobs": -1,  # threads (all cores)
+        },
+    },
     "p7_loader": {  # loads p4's CSVs from disk (so it can run without stages 1-4) and runs p5 (-> p6) in subject-level CV per (duration, overlap)
-        "folds": 2,  # stratified folds over subjects; TEMP: 2 for the 4-subject TUH sample -> back to 5 after the full download (needs >= folds subjects per class)
+        "folds": 5,  # stratified folds over subjects (needs >= folds subjects per class)
         "repeats": 1,  # CV repeats with different shuffles (Tamim used 50)
         "seed": 0,  # shuffle seed for repeat 0 (repeat r uses seed + r)
         "negative": ["normal"],  # subtypes labelled 0; everything else is 1 (stroke). Subtype = subject_id before the last "_"
+        "metrics": ["auc", "accuracy", "balanced_accuracy", "sensitivity", "specificity"],  # computed per fold on the test subjects
+        "out_dirs": {  # p7 writes per-fold metrics and per-subject predictions here
+            Dataset.ARCHIVE: "out/p7/Archive",
+            Dataset.FIGSHARE: "out/p7/FIgshare",
+            Dataset.TUH: "out/p7/TUH",
+        },
         "debug": False,  # True: print each subject table's shape and label counts
     },
 }

@@ -10,7 +10,7 @@ Run from `ABOMINATION/` with the venv set up (see the top-level README).
 .venv/bin/python src/pipeline.py -s 7 -e 7         # modelling only, from p4's CSVs on disk
 ```
 
-Stages are numbered in `Registered_pipelines` in `pipeline.py` (0 sanity, 1–4 = p1–p4, 7 = p7; p5/p6 run inside p7). `--end` must be a stage and `--start <= --end`; `--start` must be in `STARTABLE` (0, or 7 which reads p4's CSVs from disk). Steps run in order; each step's `output(**kwargs)` returns a dict that is passed to the next step. Startable stages always begin with an empty dict, so p7 (and the p5/p6 inside it) never sees p1–p4's outputs: the only links are the config and p4's CSVs on disk. p2 drops p1's raw signals (`data`) once they are on disk.
+Stages are numbered in `Registered_pipelines` in `pipeline.py` (0 sanity, 1–4 = p1–p4, 7 = p7; p5 Select and p6 Model run inside p7, once per CV fold). `--end` must be a stage and `--start <= --end`; `--start` must be in `STARTABLE` (0, or 7 which reads p4's CSVs from disk). Steps run in order; each step's `output(**kwargs)` returns a dict that is passed to the next step. Startable stages always begin with an empty dict, so p7 (and the p5/p6 inside it) never sees p1–p4's outputs: the only links are the config and p4's CSVs on disk. p2 drops p1's raw signals (`data`) once they are on disk.
 
 Notes:
 
@@ -24,7 +24,7 @@ Notes:
 
 Options live in `components/p0_pipeline_config.py`: a plain Python dict (`CONFIG`) with comments. Edit it to change options. Dataset and view choices are `StrEnum` classes there (`Dataset.ARCHIVE`/`Dataset.FIGSHARE`, `View.NONE`/`View.TABLES`/`View.NPY`) for steps to import. `base.load_config()` returns a deep copy, loaded once in `pipeline.py` and passed to every step.
 
-- One top-level key per stage (`p1_data_formatting` … `p4_features`) plus shared `paths`.
+- One top-level key per stage (`p1_data_formatting` … `p7_loader`) plus shared `paths`.
 - Relative paths resolve against `ABOMINATION/` (`base.resolve`).
 - Each step reads its section as `self.opts` (full dict in `self.config`); the section is set by `section = "..."` on the class.
 
@@ -50,11 +50,18 @@ Options live in `components/p0_pipeline_config.py`: a plain Python dict (`CONFIG
 | p3 Epoch | Sliding window (duration × overlap); z-score per epoch, clip ±20 SD |
 | p4 Features | Per-epoch shape features (skew, kurtosis, entropy × channels: 48 archive, 57 TUH) + Welch band features (4 relative powers + 6 ratios + DTABR, spectral mean, 1/f slope × channels: 208 archive, 247 TUH) + BSI per left/right pair (8 + mean = 9) + fuzzy / sample / approximate entropy (× channels: 48 archive, 57 TUH) → q10/25/50/75/90 across epochs, one quantile CSV per subject each; Morlet wavelet TF PNG per subject |
 | p5 Select | Top k (30) by mutual information or ANOVA, on each fold's training subjects, only over features enabled in `p4_features`; prints them |
-| p6 Model | *Planned:* XGBoost, fixed hyperparameters, `scale_pos_weight` = neg/pos |
-| p7 Loader | Loads p4's CSVs (enabled classes only), labels subjects (`negative` subtypes = 0), runs the p5 → (p6) mini-pipeline per stratified subject-level fold; returns `selection` with per-fold choices and selection frequency. *Planned:* AUC, permutation test |
+| p6 Model | Fits the classifier named by `p6_model.model` (`ModelName`; XGBoost now, fixed hyperparameters in `p6_model.xgboost`, `scale_pos_weight` = neg/pos per fold) on the fold's training subjects; returns `y_score` = P(stroke) and `y_pred` (`y_score >= threshold`) for the test subjects. One folder per model family in `components/models/<name>/`, picked by `build(name, opts)` |
+| p7 Loader | Loads p4's CSVs (enabled classes only), labels subjects (`negative` subtypes = 0), runs p5 → p6 per stratified subject-level fold (`folds` × `repeats`) and scores each test fold (`p7_loader.metrics`: AUC, accuracy, balanced accuracy, sensitivity = stroke recall, specificity = healthy recall; AUC is NaN for a one-class fold). Per (duration, overlap) prints the most-chosen features, mean ± SD of each metric and the pooled out-of-fold AUC (all test scores of a repeat together, averaged over repeats), then a table of all combinations sorted by pooled AUC. Writes `out/p7/<Dataset>/<d>s/<o>pct/metrics.csv` (repeat, fold, n_train, n_test, metrics) and `predictions.csv` (subject_id, repeat, fold, y_true, y_score, y_pred), plus `out/p7/<Dataset>/summary.csv` (one row per combination: duration, overlap, folds, `<metric>_mean` / `_std`, pooled_auc); overwritten on rerun. Returns `selection` (per combination: folds, frequency, subjects, labels, metrics, predictions, summary) and `summary` (that table). *Planned:* permutation test |
 
-- p5–p6 are fitted inside each CV fold (`MINI` in `p7_loader.py`), so p7 calls them per fold rather than them running once in the chain; p5 never sees test subjects or p4's in-memory output.
+- p5–p6 run inside each CV fold (`MINI = [Selection, Model]` in `p7_loader.py`), so p7 calls them per fold rather than them running once in the chain. Each fold's layer holds the training subjects (`X`, `y`) and the test subjects (`X_test`, `y_test`): p5 scores and picks features on `X`/`y` only, then cuts `X_test` to the same columns and fills its gaps with the training medians; p6 fits on `X`/`y` and only predicts `X_test`; `y_test` is passed through untouched for p7's metrics. Neither sees p4's in-memory output.
 - p3–p7 repeat per duration × overlap combination; p1–p2 run once and are reused.
+
+## Adding a model
+
+1. Create `components/models/<name>/__init__.py` with a class taking `opts` (its config sub-dict) and providing `fit(X, y) -> self` and `score(X) -> P(stroke)` of shape (n,) (the `Model` protocol in `components/models/__init__.py`).
+2. Register it in `MODELS` in `components/models/__init__.py` (`"<name>": YourModel`).
+3. Add a `ModelName` member in `components/p0_pipeline_config.py`, a `"<name>": {...}` hyperparameter sub-dict under `p6_model`, and set `p6_model.model` to it to use it.
+4. Add tests in `tests/`. p6 and p7 need no changes: metrics and outputs are the same for every model.
 
 ## TUH data
 

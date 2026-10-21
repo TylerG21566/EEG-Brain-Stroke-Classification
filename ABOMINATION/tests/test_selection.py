@@ -38,6 +38,29 @@ def test_selection_respects_config_toggles(cfg):
     assert sorted(chosen) == sorted(c for c in X.columns if c.endswith(("_skew", "_entropy")))
 
 
+def test_selection_passes_test_subjects_through(cfg):  # same columns, gaps filled with the training medians
+    cfg["p5_selection"].update(k=3, debug=False)
+    X, y, fam, ext = fold(cfg)
+    X_test = fold(cfg, n=6, seed=1)[0]
+    X_test.loc[X_test.index[0], "q90_F4_kurtosis"] = np.nan
+    out = Selection(cfg).output(X=X, y=y, families=fam, extractors=ext, fold="t", X_test=X_test)
+    assert list(out["X_test"].columns) == out["chosen"] and len(out["X_test"]) == 6 and not out["X_test"].isna().any().any()
+    assert out["X_test"].iloc[0]["q90_F4_kurtosis"] == out["fill"]["q90_F4_kurtosis"] == X["q90_F4_kurtosis"].median()
+    assert "X_test" not in Selection(cfg).output(X=X, y=y, families=fam, extractors=ext, fold="t")  # no test data -> no key
+
+
+@pytest.mark.parametrize("method", list(p0.Selector))
+def test_selection_ignores_test_values(cfg, method):  # chosen features, scores and fill come from the training subjects only
+    cfg["p5_selection"].update(method=method, k=3, debug=False)
+    X, y, fam, ext = fold(cfg)
+    X.iloc[2, 3] = np.nan
+    a, b = fold(cfg, n=6, seed=1)[0], fold(cfg, n=6, seed=2)[0] * 1e6
+    b.iloc[:, ::2] = np.nan
+    run = lambda T: Selection(cfg).output(X=X.copy(), y=y, families=fam, extractors=ext, fold="t", X_test=T)
+    ra, rb = run(a), run(b)
+    assert ra["chosen"] == rb["chosen"] and ra["scores"].equals(rb["scores"]) and ra["fill"].equals(rb["fill"]) and ra["X"].equals(rb["X"])
+
+
 def test_loader_reads_enabled_csvs_and_runs_cv(cfg, capsys):
     p4 = cfg["p4_features"]
     for k in ("welch", "entropy"):
