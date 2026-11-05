@@ -184,8 +184,15 @@ CONFIG = {
         "features": ["age", "sex"],  # columns from demographic_pipeline.demographics (sex: 1 = male)
         "C": 1.0,  # inverse L2 strength
     },
-    "combiner": {  # stacking inside each p7 fold: EEG model (p5 -> p6) + demographic model -> logistic regression on their P(stroke)
+    "ekg_model": {  # third architecture: logistic regression on heart-rate variability from the EKG lead (TUH only)
+        "features": ["hr", "sdnn", "rmssd", "pnn50", "cv", "lf_hf"],  # from ekg_components.hrv.FEATURES
+        "band": (5.0, 25.0),  # QRS band-pass (Hz) for R-peak detection
+        "C": 1.0,  # inverse L2 strength
+        "out_dirs": {Dataset.TUH: "out/ekg/TUH"},  # cached features per recordings mode; delete to recompute
+    },
+    "combiner": {  # stacking inside each p7 fold: EEG model (p5 -> p6) + the models below -> logistic regression on their P(stroke)
         "enabled": False,  # False: p7 scores the EEG model alone
+        "models": ["demographic", "ekg"],  # extra base models next to EEG: "demographic" | "ekg"
         "inner_folds": 5,  # inner CV on the training subjects for the out-of-fold scores the combiner is fitted on
         "C": 1.0,  # inverse L2 strength
         "threshold": 0.5,  # P(stroke) >= threshold -> 1

@@ -50,12 +50,12 @@ def test_ensemble_never_shows_test_cases_and_leans_on_demographics(cfg):
     X = pd.DataFrame({"c": rng.standard_normal(60)}, index=ids)
     test = list(range(0, 60, 5))
     train = [i for i in range(60) if i not in test]
-    out = Ensemble(cfg).output(X=X.iloc[train], y=y[train], X_test=X.iloc[test], y_test=y[test], demo=demo_frame(ids, y), steps=[FakeEEG], fold="f")
+    out = Ensemble(cfg).output(X=X.iloc[train], y=y[train], X_test=X.iloc[test], y_test=y[test], side={"demographic": demo_frame(ids, y)}, steps=[FakeEEG], fold="f")
     test_ids = set(X.index[test])
     assert len(FakeEEG.seen) == 4 and all(not (a & test_ids) for a, _ in FakeEEG.seen[:3])  # 3 inner folds use training cases only
     assert FakeEEG.seen[3] == (set(X.index[train]), test_ids)  # final refit: all training cases -> test cases
-    assert out["y_score"].shape == out["y_score_eeg"].shape == out["y_score_demo"].shape == (len(test),)
-    assert out["weights"][1] > abs(out["weights"][0]) and roc_auc_score(y[test], out["y_score"]) > 0.9
+    assert out["y_score"].shape == out["y_score_eeg"].shape == out["y_score_demographic"].shape == (len(test),)
+    assert out["weights"]["demographic"] > abs(out["weights"]["eeg"]) and roc_auc_score(y[test], out["y_score"]) > 0.9
 
 
 def test_demographics_keys_match_p1_ids(cfg, monkeypatch):
@@ -76,7 +76,9 @@ def test_p7_with_combiner_writes_every_score(lcfg, monkeypatch, tmp_path):
     lcfg["p4_features"]["out_dirs"] = {p0.Dataset.ARCHIVE: str(tmp_path / "p4_big")}
     write_subjects(lcfg, [(4, 0)], n=10)  # inner folds need >= 2 cases per class for p5's mutual information
     ids = [f"{s}_{i}" for s in ("normal", "ischemic") for i in range(10)]
-    monkeypatch.setattr(p7, "demographics", lambda cfg: demo_frame(ids, [0] * 10 + [1] * 10))
+    y = [0] * 10 + [1] * 10
+    monkeypatch.setattr(p7, "side_inputs", lambda cfg: {"demographic": demo_frame(ids, y), "ekg": pd.DataFrame({"hr": 70 + 10 * np.array(y) + rng.standard_normal(20)}, index=ids)})
+    lcfg["ekg_model"]["features"] = ["hr"]
     Loader(lcfg).output()
     pred = pd.read_csv(lcfg["p7_loader"]["out_dirs"][p0.Dataset.ARCHIVE] + "/4s/0pct/predictions.csv")
-    assert {"y_score", "y_score_eeg", "y_score_demo"} <= set(pred.columns) and len(pred) == 2 * 20  # 2 repeats × 20 cases
+    assert {"y_score", "y_score_eeg", "y_score_demographic", "y_score_ekg"} <= set(pred.columns) and len(pred) == 2 * 20  # 2 repeats × 20 cases

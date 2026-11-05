@@ -9,8 +9,7 @@ from components.base import Combo, Layer, PipelineStep, combo_dir, groups, resol
 from components.features import FEATURE_CLASSES as EXTRACTORS # no p3/p4 imports: p7 only shares the config and the CSV layout on disk
 from components.p5_selection import Selection
 from components.p6_model import Model
-from combiner_pipeline import Ensemble
-from demographic_pipeline import demographics
+from combiner_pipeline import Ensemble, side_inputs
 
 MINI: list[type[PipelineStep]] = [Selection, Model] # per-fold mini-pipeline: fitted on the training subjects; p5 only applies its choice + training medians to X_test, p6 scores it
 METRICS = ["auc", "accuracy", "balanced_accuracy", "sensitivity", "specificity"] # fallback when the config has no p7_loader["metrics"]
@@ -73,8 +72,8 @@ class Loader(PipelineStep): # p7: reads p4's CSVs from disk (works without stage
         base = resolve(p4["out_dirs"][dataset])
         out = resolve(opts.get("out_dirs", {}).get(dataset, Path(self.config["paths"]["out"]) / "p7" / str(dataset))) # metrics / predictions CSVs
         ensemble = self.config.get("combiner", {}).get("enabled", False)
-        demo = demographics(self.config) if ensemble else None # second architecture's input, loaded once
-        parts = ["y_score_eeg", "y_score_demo"] if ensemble else [] # base-model scores kept next to the combined one
+        side = side_inputs(self.config) if ensemble else {} # extra architectures' inputs, loaded once
+        parts = [f"y_score_{n}" for n in ["eeg", *side]] if ensemble else [] # base-model scores kept next to the combined one
         results: dict[Combo, dict[str, Any]] = {}
         for d, o in self.config["p3_epoching"]["combinations"]:
             folder = combo_dir(base, d, o)
@@ -95,8 +94,8 @@ class Loader(PipelineStep): # p7: reads p4's CSVs from disk (works without stage
                 for i, (train, test) in enumerate(cv.split(X, y, g) if kind is StratifiedGroupKFold else cv.split(X, y)):
                     layer = {"X": X.iloc[train], "y": y[train], "X_test": X.iloc[test], "y_test": y[test], "families": families, "extractors": extractors,
                              "fold": f"{d:g} s / {o:g}% | repeat {r + 1}/{opts['repeats']} | fold {i + 1}/{opts['folds']}"}
-                    if ensemble: # EEG (p5 -> p6) + demographic model -> combiner
-                        layer = Ensemble(self.config).output(**layer, demo=demo, steps=MINI)
+                    if ensemble: # EEG (p5 -> p6) + extra models -> combiner
+                        layer = Ensemble(self.config).output(**layer, side=side, steps=MINI)
                     else:
                         for step in MINI: # p5 -> p6: fitted on the training subjects; test labels only come back out for scoring
                             layer = step(self.config).output(**layer)
