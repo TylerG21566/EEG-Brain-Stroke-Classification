@@ -1,10 +1,11 @@
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Any
 import numpy as np
 import pandas as pd
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, recall_score, roc_auc_score
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold
 from components.base import Combo, Layer, PipelineStep, combo_dir, resolve
 from components.features import FEATURE_CLASSES as EXTRACTORS # no p3/p4 imports: p7 only shares the config and the CSV layout on disk
 from components.p5_selection import Selection
@@ -34,6 +35,9 @@ def load_combo(folder: Path, keys: list[str]) -> tuple[pd.DataFrame, dict[str, s
 
 def labels(sids: list[str] | pd.Index, negative: list[str]) -> np.ndarray: # subtype = subject_id before the last "_" (e.g. ischemic_5 -> ischemic); negative subtypes -> 0, others -> 1
     return np.array([0 if s.rsplit("_", 1)[0] in negative else 1 for s in sids])
+
+def groups(sids: list[str] | pd.Index) -> np.ndarray: # patient of each case: TUH CAPPED sessions "stroke_aaaaaabk-s002" -> "stroke_aaaaaabk"; other ids are their own group
+    return np.array([re.sub(r"-s\d{3}$", "", s) for s in sids])
 
 def auc(y_true: np.ndarray, y_score: np.ndarray) -> float: # NaN when only one class is present
     return float(roc_auc_score(y_true, y_score)) if len(set(np.asarray(y_true).tolist())) == 2 else np.nan
@@ -79,13 +83,15 @@ class Loader(PipelineStep): # p7: reads p4's CSVs from disk (works without stage
             y = labels(X.index, opts["negative"])
             if opts["debug"]:
                 print(f"[p7] {d:g} s / {o:g}%: {X.shape[0]} subjects × {X.shape[1]} features, labels {dict(Counter(y.tolist()))}", flush=True)
-            if X.empty or len(set(y)) < 2 or min(Counter(y.tolist()).values()) < opts["folds"]:
+            g = groups(X.index)
+            if X.empty or len(set(y)) < 2 or min(Counter(dict(zip(g, y.tolist())).values()).values()) < opts["folds"]: # counts patients, not sessions
                 print(f"[p7] {d:g} s / {o:g}%: skipped (need both classes with at least {opts['folds']} subjects each)", flush=True)
                 continue
             folds, rows, preds = [], [], []
             for r in range(opts["repeats"]):
-                cv = StratifiedKFold(opts["folds"], shuffle=True, random_state=opts["seed"] + r)
-                for i, (train, test) in enumerate(cv.split(X, y)):
+                kind = StratifiedGroupKFold if len(set(g)) < len(g) else StratifiedKFold # several sessions per patient -> keep them in one fold
+                cv = kind(opts["folds"], shuffle=True, random_state=opts["seed"] + r)
+                for i, (train, test) in enumerate(cv.split(X, y, g) if kind is StratifiedGroupKFold else cv.split(X, y)):
                     layer = {"X": X.iloc[train], "y": y[train], "X_test": X.iloc[test], "y_test": y[test], "families": families, "extractors": extractors,
                              "fold": f"{d:g} s / {o:g}% | repeat {r + 1}/{opts['repeats']} | fold {i + 1}/{opts['folds']}"}
                     for step in MINI: # p5 -> p6: fitted on the training subjects; test labels only come back out for scoring

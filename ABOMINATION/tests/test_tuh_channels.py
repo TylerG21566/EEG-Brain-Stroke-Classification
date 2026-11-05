@@ -24,7 +24,7 @@ def electrodes(tuh_cfg):
 def tuh_df(tuh_cfg, electrodes):  # fake p1 TUH output: signals not loaded, one EDF path per subject
     t = tuh_cfg["p1_data_formatting"]["tuh"]
     df = pd.DataFrame([{"subject_id": sid, "label": "stroke" if sid.startswith("stroke") else "healthy", "subtype": sid.split("_")[0], "split": None,
-                        "patient": sid.split("_")[1], "sfreq": fs, "signal": None, "path": f"/edf/{sid}.edf"} for sid, fs in RATES.items()])
+                        "patient": sid.split("_")[1], "sfreq": fs, "signal": None, "path": f"/edf/{sid}.edf", "paths": [f"/edf/{sid}.edf"], "seconds": [None]} for sid, fs in RATES.items()])
     df.attrs = {"dataset": p0.Dataset.TUH, "sfreq": None, "channels": list(electrodes), "electrodes": list(electrodes), "references": list(t["references"])}
     return df
 

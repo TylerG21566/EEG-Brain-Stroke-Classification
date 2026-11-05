@@ -27,10 +27,10 @@ def figshare_samples(df: pd.DataFrame) -> Iterator[Sample]: # FIgshare: already 
         yield {"subject_id": r.subject_id, "label": r.label, "subtype": r.subtype, "split": None, "signal": r.signal,
                "sfreq": df.attrs["sfreq"], "channels": list(df.attrs["channels"]), "paths": [r.path]}
 
-def tuh_samples(df: pd.DataFrame) -> Iterator[Sample]: # TUH: one EDF per subject; signal None, read inside the worker (load()) so only `processes` recordings are in memory at once
+def tuh_samples(df: pd.DataFrame) -> Iterator[Sample]: # TUH: one or more EDFs per subject (p0 tuh.recordings); signal None, read inside the worker (load()) so only `processes` recordings are in memory at once
     for r in df.itertuples(): # sfreq per row (250 / 256 / 400 / 1000 Hz)
         yield {"subject_id": r.subject_id, "label": r.label, "subtype": r.subtype, "split": r.split, "signal": None, "sfreq": float(r.sfreq),
-               "channels": list(df.attrs["channels"]), "paths": [r.path], "electrodes": list(df.attrs["electrodes"]), "references": list(df.attrs["references"])}
+               "channels": list(df.attrs["channels"]), "paths": list(r.paths), "seconds": list(r.seconds), "electrodes": list(df.attrs["electrodes"]), "references": list(df.attrs["references"])}
 
 SAMPLERS = {Dataset.ARCHIVE: archive_samples, Dataset.FIGSHARE: figshare_samples, Dataset.TUH: tuh_samples}
 
@@ -38,11 +38,18 @@ def read_tuh(path: str, electrodes: list[str], references: list[str]) -> tuple[n
     from components.tuh import read_tuh
     return read_tuh(path, electrodes, references)
 
-def load(sample: Sample) -> Sample: # lazy samples (TUH): read the EDF -> (19, T) µV in the configured channel order + its own sfreq
-    x, sfreq = read_tuh(sample["paths"][0], sample["electrodes"], sample["references"])
-    if x.shape[0] != len(sample["channels"]):
-        raise ValueError(f"{sample['paths'][0]}: read {x.shape[0]} channels, expected {len(sample['channels'])} ({sample['channels']})")
-    return {**sample, "signal": x, "sfreq": float(sfreq)}
+def load(sample: Sample) -> Sample: # lazy samples (TUH): read each EDF, cut it to its seconds (None = whole), join in order -> (19, T) µV at the first file's rate
+    parts, sfreq = [], None
+    for path, secs in zip(sample["paths"], sample.get("seconds") or [None] * len(sample["paths"])):
+        x, fs = read_tuh(path, sample["electrodes"], sample["references"])
+        if x.shape[0] != len(sample["channels"]):
+            raise ValueError(f"{path}: read {x.shape[0]} channels, expected {len(sample['channels'])} ({sample['channels']})")
+        x = x if secs is None else x[:, :int(round(secs * fs))]
+        sfreq = sfreq or float(fs)
+        if fs != sfreq: # files in one session can differ in rate
+            x = mne.filter.resample(x.astype(np.float64), up=sfreq, down=fs, method="polyphase", verbose=False).astype(np.float32)
+        parts.append(x)
+    return {**sample, "signal": np.concatenate(parts, axis=1), "sfreq": sfreq}
 
 def process(sample: Sample, opts: Opts) -> Sample: # opts = config["p2_sample_processing"]
     sfreq = opts["sfreq"]

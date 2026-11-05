@@ -78,6 +78,7 @@ def test_read_tuh_missing_electrode(edfs):
 def tuh_cfg(cfg, db):
     cfg["p1_data_formatting"].update(dataset=p0.Dataset.TUH)
     cfg["p1_data_formatting"]["tuh"]["db_path"] = str(db)
+    cfg["p1_data_formatting"]["tuh"]["recordings"] = p0.Recordings.LONGEST # tests below use the single longest recording
     return cfg
 
 
@@ -136,3 +137,36 @@ def test_real_tuh(real_cfg):
     assert len(df) and set(df.subtype) <= {"stroke", "normal"} and df.subject_id.is_unique
     x, sfreq = read_tuh(df.path[0], df.attrs["electrodes"], df.attrs["references"])
     assert x.shape[0] == len(df.attrs["channels"]) and sfreq == df.sfreq[0]
+
+
+def test_capped_one_case_per_session(db):  # each labelled session its own row, files longest first, total <= max_minutes; unlabelled sessions left out
+    df = labelled_recordings(db, p0.Recordings.CAPPED, 20).set_index(["patient", "session"])
+    assert sorted(df.index) == [("aaaaaabk", 1), ("aaaaacdh", 1), ("aaaaacdh", 2), ("aaaaazzz", 1)]
+    assert [p.rsplit("_", 1)[1] for p in df.edf_paths["aaaaaabk", 1]] == ["t001.edf"] and df.seconds["aaaaaabk", 1] == [1200.0]
+    assert df.seconds["aaaaacdh", 1] == [300.0] and df.seconds["aaaaazzz", 1] == [500.0, 500.0]
+    df = labelled_recordings(db, p0.Recordings.CAPPED, 15).set_index(["patient", "session"])  # cut inside a file
+    assert df.seconds["aaaaaabk", 1] == [900.0] and df.seconds["aaaaazzz", 1] == [500.0, 400.0] and (df.duration_s <= 900).all()
+
+
+def test_p1_capped_ids(tuh_cfg):  # session-level subject_ids keep the subtype before the last "_"
+    tuh_cfg["p1_data_formatting"]["tuh"]["recordings"] = p0.Recordings.CAPPED
+    root = Path(tuh_cfg["p1_data_formatting"]["roots"][p0.Dataset.TUH])
+    for pat, ses, tok, *_ in RECS:
+        (f := root / edf(pat, ses, tok).removeprefix("../")).parent.mkdir(parents=True, exist_ok=True)
+        f.touch()
+    df = DataFormat(tuh_cfg).output()["data"]
+    assert sorted(df.subject_id) == ["normal_aaaaacdh-s001", "normal_aaaaacdh-s002", "stroke_aaaaaabk-s001", "stroke_aaaaazzz-s001"]
+
+
+def test_load_joins_and_cuts(monkeypatch):  # p2 reads each file, cuts it to its seconds, resamples to the first file's rate, joins along time
+    import components.p2_sample_processing as p2
+    files = {"a": (np.ones((len(E), 2500), np.float32), 250.0), "b": (2 * np.ones((len(E), 5000), np.float32), 500.0)}
+    monkeypatch.setattr(p2, "read_tuh", lambda p, e, r: files[p])
+    s = p2.load({"paths": ["a", "b"], "seconds": [None, 4.0], "channels": E, "electrodes": E, "references": REFS})
+    assert s["sfreq"] == 250.0 and s["signal"].shape == (len(E), 2500 + 1000) and np.allclose(s["signal"][:, 2600:3400], 2)
+
+
+def test_all_joins_every_labelled_recording(db):  # every file of every labelled session, uncut, in session/token order; unlabelled sessions left out
+    df = labelled_recordings(db, p0.Recordings.ALL).set_index("patient")
+    assert [p.rsplit("/", 1)[1] for p in df.edf_paths["aaaaacdh"]] == ["aaaaacdh_s001_t000.edf", "aaaaacdh_s002_t000.edf"]
+    assert df.seconds["aaaaaabk"] == [None, None] and df.duration_s.to_dict() == {"aaaaaabk": 1800.0, "aaaaacdh": 1200.0, "aaaaazzz": 1000.0}

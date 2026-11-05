@@ -87,3 +87,8 @@ def test_helpers():
     assert split_name("tia_2_bsi", ["_entropy", "_welch", "_bsi", ""]) == ("tia_2", "_bsi")
     assert split_name("tia_2", ["_bsi", ""]) == ("tia_2", "")
     assert labels(["normal_1", "tia_2", "ischemic_10"], ["normal"]).tolist() == [0, 1, 1]
+
+
+def test_groups_keep_sessions_together():  # TUH CAPPED: a patient's sessions share a group, so grouped CV never splits them
+    from components.p7_loader import groups
+    assert list(groups(["stroke_aaaaaabk-s001", "stroke_aaaaaabk-s002", "ischemic_5", "sub-01"])) == ["stroke_aaaaaabk", "stroke_aaaaaabk", "ischemic_5", "sub-01"]

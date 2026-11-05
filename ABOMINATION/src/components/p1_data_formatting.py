@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from typing import Any
 from components.base import Layer, Opts, PipelineStep, resolve
-from components.p0_pipeline_config import Dataset, View
+from components.p0_pipeline_config import Dataset, Recordings, View
 from components.tuh import labelled_recordings, read_tuh
 
 class DataFormat(PipelineStep):
@@ -53,12 +53,14 @@ def figshare(root: Path) -> pd.DataFrame:
 
 def tuh(root: Path, opts: Opts) -> pd.DataFrame:
     t = opts["tuh"]
-    df = labelled_recordings(resolve(t["db_path"]))
+    df = labelled_recordings(resolve(t["db_path"]), t["recordings"], t["max_minutes"])
     subtype = df.label.map(t["labels"])
-    df = pd.DataFrame({"subject_id": subtype + "_" + df.patient, "label": df.label, "subtype": subtype, "split": None, "patient": df.patient, "session": df.session,
+    case = df.patient + (("-s" + df.session.map("{:03d}".format)) if t["recordings"] == Recordings.CAPPED else "") # CAPPED: one case per session; "-" keeps p7's subtype rule (before the last "_")
+    df = pd.DataFrame({"subject_id": subtype + "_" + case, "label": df.label, "subtype": subtype, "split": None, "patient": df.patient, "session": df.session,
                        "token": df.token, "sfreq": df.sample_frequency, "montage": df.montage, "age": df.age, "gender": df.gender, "signal": None,
-                       "path": [str(root / p) for p in df.edf_path]}) # signals stay on disk: p2 workers read them with read_tuh (all at once would be ~8 GB)
-    on_disk = df.path.map(lambda p: Path(p).exists())
+                       "path": [str(root / p) for p in df.edf_path], "paths": [[str(root / p) for p in ps] for ps in df.edf_paths], "seconds": df.seconds})
+    # signals stay on disk: p2 workers read and join paths (each cut to its seconds) with read_tuh (all at once would be ~8 GB)
+    on_disk = df.paths.map(lambda ps: all(Path(p).exists() for p in ps))
     if not on_disk.all():
         if not t["skip_missing"]:
             raise FileNotFoundError(f"{(~on_disk).sum()} TUH EDFs missing under {root}, e.g. {df.path[~on_disk].iloc[0]}; run scripts/download_tuh.py")

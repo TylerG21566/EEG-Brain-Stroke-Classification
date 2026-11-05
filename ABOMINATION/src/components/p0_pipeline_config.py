@@ -14,12 +14,20 @@ class View(StrEnum): # p1 debug popup
     TABLES = "tables"  # full p1 tables in browser
     NPY = "npy"  # first recording only
 
+class Recordings(StrEnum): # TUH: which of a subject's recordings p1 picks (joined along time in p2)
+    LONGEST = "longest"  # single longest labelled recording, uncut
+    CAPPED = "capped"  # one case per labelled session (subject_id <subtype>_<patient>-s<session>): its files longest first, cut at max_minutes in total; p7 keeps a patient's sessions in one fold
+    ALL = "all"  # every labelled recording (all labelled sessions, in session/token order), uncut
+
 class Selector(StrEnum): # p5 feature scoring
     MUTUAL_INFO = "mutual_info"  # sklearn mutual_info_classif (Tamim's SelectKBest choice)
     ANOVA = "anova"  # sklearn f_classif: fast, linear separation only
 
 class ModelName(StrEnum): # p6 classifier; add RNN etc. here as new folders in components/models/
     XGBOOST = "xgboost"  # gradient-boosted trees (Tamim §4.7.1)
+    
+OVERLAP_PERCENTAGES = [50] # between 0 and 90 only please
+EPOCH_SIZES = [3] # 1-10 seconds only please
 
 CONFIG = {
     "paths": {
@@ -44,11 +52,13 @@ CONFIG = {
             "channel_names": ["FP1", "FP2", "F3", "F4", "C3", "C4", "P3", "P4", "O1", "O2", "F7", "F8", "T3", "T4", "T5", "T6"],
             "name_pattern": r"(\w+)_subject_(\d+)_(\d+)\.npy",  # subtype, subject, file index
         },
-        "tuh": {  # one row per subject: their longest recording in a labelled session; signals loaded later (p2 workers, read_tuh)
+        "tuh": {  # one row per subject (see recordings); signals loaded later (p2 workers, read_tuh)
             "db_path": "data/GOAT/DOCS/DataFeatures/tueg_headers.db",  # labels / recordings / edf_headers tables
             "electrodes": ["FP1", "FP2", "F3", "F4", "F7", "F8", "FZ", "C3", "C4", "CZ", "P3", "P4", "PZ", "O1", "O2", "T3", "T4", "T5", "T6"],  # picked in this order
             "references": ["REF", "LE"],  # EDF channel "EEG <E>-<ref>", first match wins
             "labels": {"stroke": "stroke", "healthy": "normal"},  # db label -> subtype ("normal" = p7 negative)
+            "recordings": Recordings.CAPPED,  # Recordings.LONGEST | Recordings.CAPPED | Recordings.ALL
+            "max_minutes": 20.0,  # per-session cap for Recordings.CAPPED
             "skip_missing": True,  # True: drop recordings whose EDF isn't on disk (prints counts); False: raise
         },
     },
@@ -69,7 +79,9 @@ CONFIG = {
     },
     "p3_epoching": {
         # (duration s, overlap %) pairs; each p4 worker loads a subject once and runs every pair
-        "combinations": [(d, o) for d in (4, 10) for o in (0, 50)],
+        "overlaps": OVERLAP_PERCENTAGES,
+        "epoch_sizes": EPOCH_SIZES,
+        "combinations": [(d, o) for d in EPOCH_SIZES for o in OVERLAP_PERCENTAGES],
         "clip": 20.0,  # clip z-scored epochs at ±clip SD
         "out_dirs": {  # debug only: <out_dir>/<duration>s/<overlap>pct/<subject>_e<idx>_t<start>s.npy
             Dataset.ARCHIVE: "out/p3/Archive",
@@ -79,7 +91,7 @@ CONFIG = {
         "debug": False,  # True: write every epoch to out_dirs as it is generated
     },
     "p4_features": {  # per-epoch features -> per-subject quantile summary
-        "processes": os.cpu_count()//2,  # worker pool size (all cores; one subject per task)
+        "processes": max(1, os.cpu_count()//2),  # worker pool size (all cores; one subject per task)
         "quantiles": [10, 25, 50, 75, 90],  # percentiles of each feature across a subject's epochs
         
         
@@ -93,7 +105,7 @@ CONFIG = {
         
         # Welch PSD per channel: 4 relative band powers + 6 pairwise band ratios + DTABR, spectral mean, 1/f slope (13 × channels: 208 archive, 247 TUH); nperseg = min(win, max_nperseg_s × sfreq), floored at min_nperseg
         # slow / fast: bands summed for DTABR = (delta + theta) / (alpha + beta)
-        "welch": {"enabled": False, 
+        "welch": {"enabled": True, 
                   "features": {"rel": True, "ratio": True, "dtabr": True, "spec_mean": True, "slope": True},
                   "bands": {"delta": (1.0, 4.0), "theta": (4.0, 8.0), "alpha": (8.0, 13.0), "beta": (13.0, 30.0)}, 
                   "window": "hamming", 
@@ -145,7 +157,7 @@ CONFIG = {
     "p5_selection": {  # runs inside p7, on each fold's training subjects only; considers only features switched on in p4_features
         "method": Selector.MUTUAL_INFO,  # Selector.MUTUAL_INFO | Selector.ANOVA
         "k": 30,  # keep the top k features (capped at the number available)
-        "seed": 0,  # random_state for mutual information
+        "seed": 67,  # random_state for mutual information
         "debug": True,  # True: print each fold's chosen features
     },
     "p6_model": {  # runs inside p7 after p5, on each fold's chosen features; fitted on training subjects only, scores the test subjects
