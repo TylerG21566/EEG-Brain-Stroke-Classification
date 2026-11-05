@@ -1,4 +1,3 @@
-import re
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -6,10 +5,12 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, recall_score, roc_auc_score
 from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold
-from components.base import Combo, Layer, PipelineStep, combo_dir, resolve
+from components.base import Combo, Layer, PipelineStep, combo_dir, groups, resolve
 from components.features import FEATURE_CLASSES as EXTRACTORS # no p3/p4 imports: p7 only shares the config and the CSV layout on disk
 from components.p5_selection import Selection
 from components.p6_model import Model
+from combiner_pipeline import Ensemble
+from demographic_pipeline import demographics
 
 MINI: list[type[PipelineStep]] = [Selection, Model] # per-fold mini-pipeline: fitted on the training subjects; p5 only applies its choice + training medians to X_test, p6 scores it
 METRICS = ["auc", "accuracy", "balanced_accuracy", "sensitivity", "specificity"] # fallback when the config has no p7_loader["metrics"]
@@ -35,9 +36,6 @@ def load_combo(folder: Path, keys: list[str]) -> tuple[pd.DataFrame, dict[str, s
 
 def labels(sids: list[str] | pd.Index, negative: list[str]) -> np.ndarray: # subtype = subject_id before the last "_" (e.g. ischemic_5 -> ischemic); negative subtypes -> 0, others -> 1
     return np.array([0 if s.rsplit("_", 1)[0] in negative else 1 for s in sids])
-
-def groups(sids: list[str] | pd.Index) -> np.ndarray: # patient of each case: TUH CAPPED sessions "stroke_aaaaaabk-s002" -> "stroke_aaaaaabk"; other ids are their own group
-    return np.array([re.sub(r"-s\d{3}$", "", s) for s in sids])
 
 def auc(y_true: np.ndarray, y_score: np.ndarray) -> float: # NaN when only one class is present
     return float(roc_auc_score(y_true, y_score)) if len(set(np.asarray(y_true).tolist())) == 2 else np.nan
@@ -74,6 +72,9 @@ class Loader(PipelineStep): # p7: reads p4's CSVs from disk (works without stage
         extractors = {k: EXTRACTORS[k](p4) for k in keys} # their keep() decides which features p5 may use
         base = resolve(p4["out_dirs"][dataset])
         out = resolve(opts.get("out_dirs", {}).get(dataset, Path(self.config["paths"]["out"]) / "p7" / str(dataset))) # metrics / predictions CSVs
+        ensemble = self.config.get("combiner", {}).get("enabled", False)
+        demo = demographics(self.config) if ensemble else None # second architecture's input, loaded once
+        parts = ["y_score_eeg", "y_score_demo"] if ensemble else [] # base-model scores kept next to the combined one
         results: dict[Combo, dict[str, Any]] = {}
         for d, o in self.config["p3_epoching"]["combinations"]:
             folder = combo_dir(base, d, o)
@@ -94,14 +95,17 @@ class Loader(PipelineStep): # p7: reads p4's CSVs from disk (works without stage
                 for i, (train, test) in enumerate(cv.split(X, y, g) if kind is StratifiedGroupKFold else cv.split(X, y)):
                     layer = {"X": X.iloc[train], "y": y[train], "X_test": X.iloc[test], "y_test": y[test], "families": families, "extractors": extractors,
                              "fold": f"{d:g} s / {o:g}% | repeat {r + 1}/{opts['repeats']} | fold {i + 1}/{opts['folds']}"}
-                    for step in MINI: # p5 -> p6: fitted on the training subjects; test labels only come back out for scoring
-                        layer = step(self.config).output(**layer)
+                    if ensemble: # EEG (p5 -> p6) + demographic model -> combiner
+                        layer = Ensemble(self.config).output(**layer, demo=demo, steps=MINI)
+                    else:
+                        for step in MINI: # p5 -> p6: fitted on the training subjects; test labels only come back out for scoring
+                            layer = step(self.config).output(**layer)
                     y_test, y_score, y_pred = (np.asarray(layer[k]) for k in ("y_test", "y_score", "y_pred"))
                     m = fold_metrics(y_test, y_score, y_pred, names)
                     folds.append({"repeat": r, "fold": i, "train": list(X.index[train]), "test": list(X.index[test]), **{k: layer[k] for k in ("chosen", "scores")},
                                   "y_test": y_test, "y_score": y_score, "y_pred": y_pred, "metrics": m})
                     rows.append({"repeat": r, "fold": i, "n_train": len(train), "n_test": len(test), **m})
-                    preds.append(pd.DataFrame({"subject_id": X.index[test], "repeat": r, "fold": i, "y_true": y_test, "y_score": y_score, "y_pred": y_pred}))
+                    preds.append(pd.DataFrame({"subject_id": X.index[test], "repeat": r, "fold": i, "y_true": y_test, "y_score": y_score, "y_pred": y_pred, **{k: layer[k] for k in parts}}))
             metrics, pred = pd.DataFrame(rows), pd.concat(preds, ignore_index=True)
             summary = summarise(metrics, pred, names)
             dest = combo_dir(out, d, o)
@@ -112,7 +116,8 @@ class Loader(PipelineStep): # p7: reads p4's CSVs from disk (works without stage
             print(f"\n[p7] {d:g} s / {o:g}% | most often chosen over {len(folds)} folds\n" + "\n".join(f"    {c:<{max(map(len, freq.index[:10]))}}  {v:>4.0%}" for c, v in freq.head(10).items()), flush=True)
             w = max(map(len, names + ["pooled auc"]))
             print(f"[p7] {d:g} s / {o:g}% | test metrics, mean ± SD over {len(folds)} folds\n" + "\n".join(f"    {m:<{w}}  {pm(summary, m)}" for m in names)
-                  + f"\n    {'pooled auc':<{w}}  {summary['pooled_auc']:.3f} (out-of-fold, mean over {opts['repeats']} repeats) -> {dest}", flush=True)
+                  + f"\n    {'pooled auc':<{w}}  {summary['pooled_auc']:.3f} (out-of-fold, mean over {opts['repeats']} repeats) -> {dest}"
+                  + "".join(f"\n    {k.removeprefix('y_score_') + ' only':<{w}}  {pooled_auc(pred.assign(y_score=pred[k])):.3f} (pooled auc)" for k in parts), flush=True)
             results[(d, o)] = {"folds": folds, "frequency": freq, "subjects": list(X.index), "labels": y, "metrics": metrics, "predictions": pred, "summary": summary}
         table = pd.DataFrame([{"duration": d, "overlap": o, **r["summary"]} for (d, o), r in results.items()])
         if results:

@@ -179,6 +179,17 @@ CONFIG = {
             "n_jobs": -1,  # threads (all cores)
         },
     },
+    "demographic_model": {  # second architecture: logistic regression on patient details (TUH only); missing values -> training medians
+        "features": ["age", "sex"],  # columns from demographic_pipeline.demographics (sex: 1 = male)
+        "C": 1.0,  # inverse L2 strength
+    },
+    "combiner": {  # stacking inside each p7 fold: EEG model (p5 -> p6) + demographic model -> logistic regression on their P(stroke)
+        "enabled": False,  # False: p7 scores the EEG model alone
+        "inner_folds": 5,  # inner CV on the training subjects for the out-of-fold scores the combiner is fitted on
+        "C": 1.0,  # inverse L2 strength
+        "threshold": 0.5,  # P(stroke) >= threshold -> 1
+        "debug": False,  # True: print each fold's combiner weights
+    },
     "p7_loader": {  # loads p4's CSVs from disk (so it can run without stages 1-4) and runs p5 (-> p6) in subject-level CV per (duration, overlap)
         "folds": 5,  # stratified folds over subjects (needs >= folds subjects per class)
         "repeats": 1,  # CV repeats with different shuffles (Tamim used 50)

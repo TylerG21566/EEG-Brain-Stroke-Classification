@@ -1,7 +1,9 @@
 import copy
+import re
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
+import numpy as np
 from components.p0_pipeline_config import CONFIG
 
 ROOT = Path(__file__).resolve().parents[2] # ABOMINATION/; relative paths in the config resolve against this
@@ -19,6 +21,9 @@ def resolve(p: str | Path) -> Path: # absolute paths (e.g. tmp dirs in tests) pa
 
 def combo_dir(out_dir: str | Path, duration: float, overlap: float) -> Path: # e.g. out/p4/Archive/4s/50pct; the folder layout p3/p4 write and p7 reads
     return Path(out_dir) / f"{duration:g}s" / f"{overlap:g}pct"
+
+def groups(sids: Any) -> np.ndarray: # patient of each case: TUH CAPPED sessions "stroke_aaaaaabk-s002" -> "stroke_aaaaaabk"; other ids are their own group
+    return np.array([re.sub(r"-s\d{3}$", "", s) for s in sids])
 
 class PipelineStep(ABC):
     section: str | None = None # this step's key in the config

@@ -33,6 +33,9 @@ def labelled_recordings(db_path: str | Path, mode: Recordings = Recordings.LONGE
         return join(df.sort_values(["patient", "session", "token", "edf_path"]).assign(seconds=None), ["patient"])
     return join(capped(df, max_minutes * 60), ["patient", "session"])
 
+def case_ids(df: pd.DataFrame, labels: dict[str, str], mode: Recordings) -> pd.Series: # labelled_recordings rows -> subject_id, e.g. stroke_aaaaaabk (CAPPED: stroke_aaaaaabk-s001; "-" keeps p7's subtype rule)
+    return df.label.map(labels) + "_" + df.patient + (("-s" + df.session.map("{:03d}".format)) if mode == Recordings.CAPPED else "")
+
 def capped(df: pd.DataFrame, max_s: float) -> pd.DataFrame: # per labelled session: its files longest first until max_s in total; the last file is cut short
     df = df.sort_values(["patient", "session", "duration_s", "token", "edf_path"], ascending=[True, True, False, True, True])
     before = df.groupby(["patient", "session"]).duration_s.cumsum() - df.duration_s # time already taken in this session before this file
