@@ -78,7 +78,8 @@ def test_read_tuh_missing_electrode(edfs):
 def tuh_cfg(cfg, db):
     cfg["p1_data_formatting"].update(dataset=p0.Dataset.TUH)
     cfg["p1_data_formatting"]["tuh"]["db_path"] = str(db)
-    cfg["p1_data_formatting"]["tuh"]["recordings"] = p0.Recordings.LONGEST # tests below use the single longest recording
+    cfg["p1_data_formatting"]["tuh"]["recordings"] = p0.Recordings.LONGEST
+    cfg["p1_data_formatting"]["tuh"]["require_ekg"] = False # put() writes empty placeholder EDFs # tests below use the single longest recording
     return cfg
 
 
@@ -170,3 +171,12 @@ def test_all_joins_every_labelled_recording(db):  # every file of every labelled
     df = labelled_recordings(db, p0.Recordings.ALL).set_index("patient")
     assert [p.rsplit("/", 1)[1] for p in df.edf_paths["aaaaacdh"]] == ["aaaaacdh_s001_t000.edf", "aaaaacdh_s002_t000.edf"]
     assert df.seconds["aaaaaabk"] == [None, None] and df.duration_s.to_dict() == {"aaaaaabk": 1800.0, "aaaaacdh": 1200.0, "aaaaazzz": 1000.0}
+
+
+def test_p1_drops_cases_without_ekg(tuh_cfg, edfs):
+    put(tuh_cfg, *WINNERS)
+    tuh_cfg["p1_data_formatting"]["tuh"]["require_ekg"] = True
+    root = Path(tuh_cfg["p1_data_formatting"]["roots"][p0.Dataset.TUH])
+    for s, (ses, tok) in WINNERS.items():
+        edfs[str(root / edf(s.split("_")[1], ses, tok).removeprefix("../"))] = [f"EEG {e}-LE" for e in E] + (["EEG EKG-LE"] if s != "normal_aaaaacdh" else [])
+    assert sorted(DataFormat(tuh_cfg).output()["data"].subject_id) == ["stroke_aaaaaabk", "stroke_aaaaazzz"]

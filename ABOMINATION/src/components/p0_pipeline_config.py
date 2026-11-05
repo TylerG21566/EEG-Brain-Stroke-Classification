@@ -59,6 +59,7 @@ CONFIG = {
             "labels": {"stroke": "stroke", "healthy": "normal"},  # db label -> subtype ("normal" = p7 negative)
             "recordings": Recordings.CAPPED,  # Recordings.LONGEST | Recordings.CAPPED | Recordings.ALL
             "max_minutes": 20.0,  # per-session cap for Recordings.CAPPED
+            "require_ekg": True,  # True: drop cases where any EDF has no EKG channel (2 healthy cases)
             "skip_missing": True,  # True: drop recordings whose EDF isn't on disk (prints counts); False: raise
         },
     },

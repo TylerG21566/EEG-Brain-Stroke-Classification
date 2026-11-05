@@ -48,6 +48,9 @@ def join(df: pd.DataFrame, by: list[str]) -> pd.DataFrame: # one row per file (i
                                                  duration_s=g.apply(lambda f: f.seconds.fillna(f.duration_s).sum(), include_groups=False))
     return out.reset_index().sort_values(["label", *by], ignore_index=True)
 
+def has_ekg(path: str | Path) -> bool: # header only: any channel named EKG / ECG
+    return any("EKG" in c.upper() or "ECG" in c.upper() for c in mne.io.read_raw_edf(path, preload=False, verbose="error").ch_names)
+
 def read_tuh(path: str | Path, electrodes: list[str], references: list[str]) -> tuple[np.ndarray, float]:
     raw = mne.io.read_raw_edf(path, preload=False, verbose="error") # header only; data read below for the picked channels
     names = {c.upper(): c for c in raw.ch_names}

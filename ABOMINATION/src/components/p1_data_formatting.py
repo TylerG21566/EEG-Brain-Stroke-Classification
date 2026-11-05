@@ -6,7 +6,7 @@ import pandas as pd
 from typing import Any
 from components.base import Layer, Opts, PipelineStep, resolve
 from components.p0_pipeline_config import Dataset, View
-from components.tuh import case_ids, labelled_recordings, read_tuh
+from components.tuh import case_ids, has_ekg, labelled_recordings, read_tuh
 
 class DataFormat(PipelineStep):
     section = "p1_data_formatting"
@@ -67,6 +67,10 @@ def tuh(root: Path, opts: Opts) -> pd.DataFrame:
     if not on_disk.any():
         raise FileNotFoundError(f"no TUH EDFs found under {root}; run scripts/download_tuh.py first")
     df = df[on_disk].reset_index(drop=True)
+    if t["require_ekg"]:
+        ekg = df.paths.map(lambda ps: all(has_ekg(p) for p in ps))
+        print(f"p1 TUH: dropped {(~ekg).sum()} of {len(df)} cases without an EKG channel {df[~ekg].label.value_counts().to_dict()}")
+        df = df[ekg].reset_index(drop=True)
     df.attrs = {"sfreq": None, "channels": list(t["electrodes"]), "electrodes": list(t["electrodes"]), "references": list(t["references"])} # sfreq varies per row (250/256/400/1000 Hz)
     return df
 
