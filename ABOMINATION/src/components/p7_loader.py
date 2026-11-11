@@ -87,7 +87,7 @@ class Loader(PipelineStep): # p7: reads p4's CSVs from disk (works without stage
             if X.empty or len(set(y)) < 2 or min(Counter(dict(zip(g, y.tolist())).values()).values()) < opts["folds"]: # counts patients, not sessions
                 print(f"[p7] {d:g} s / {o:g}%: skipped (need both classes with at least {opts['folds']} subjects each)", flush=True)
                 continue
-            folds, rows, preds = [], [], []
+            folds, rows, preds, tuned = [], [], [], []
             for r in range(opts["repeats"]):
                 kind = StratifiedGroupKFold if len(set(g)) < len(g) else StratifiedKFold # several sessions per patient -> keep them in one fold
                 cv = kind(opts["folds"], shuffle=True, random_state=opts["seed"] + r)
@@ -104,6 +104,8 @@ class Loader(PipelineStep): # p7: reads p4's CSVs from disk (works without stage
                     folds.append({"repeat": r, "fold": i, "train": list(X.index[train]), "test": list(X.index[test]), **{k: layer[k] for k in ("chosen", "scores")},
                                   "y_test": y_test, "y_score": y_score, "y_pred": y_pred, "metrics": m})
                     rows.append({"repeat": r, "fold": i, "n_train": len(train), "n_test": len(test), **m})
+                    if layer.get("tuned"): # p6 tuning on: this fold's chosen settings
+                        tuned.append({"repeat": r, "fold": i, **layer["tuned"], "test_auc": m.get("auc", np.nan)})
                     preds.append(pd.DataFrame({"subject_id": X.index[test], "repeat": r, "fold": i, "y_true": y_test, "y_score": y_score, "y_pred": y_pred, **{k: layer[k] for k in parts}}))
             metrics, pred = pd.DataFrame(rows), pd.concat(preds, ignore_index=True)
             summary = summarise(metrics, pred, names)
@@ -111,12 +113,15 @@ class Loader(PipelineStep): # p7: reads p4's CSVs from disk (works without stage
             dest.mkdir(parents=True, exist_ok=True)
             metrics.to_csv(dest / "metrics.csv", index=False)
             pred.to_csv(dest / "predictions.csv", index=False)
+            if tuned:
+                pd.DataFrame(tuned).to_csv(dest / "tuning.csv", index=False)
             freq = pd.Series(Counter(c for f in folds for c in f["chosen"])).sort_values(ascending=False) / len(folds) # share of folds that chose each feature
             print(f"\n[p7] {d:g} s / {o:g}% | most often chosen over {len(folds)} folds\n" + "\n".join(f"    {c:<{max(map(len, freq.index[:10]))}}  {v:>4.0%}" for c, v in freq.head(10).items()), flush=True)
             w = max(map(len, names + ["pooled auc"]))
             print(f"[p7] {d:g} s / {o:g}% | test metrics, mean ± SD over {len(folds)} folds\n" + "\n".join(f"    {m:<{w}}  {pm(summary, m)}" for m in names)
                   + f"\n    {'pooled auc':<{w}}  {summary['pooled_auc']:.3f} (out-of-fold, mean over {opts['repeats']} repeats) -> {dest}"
-                  + "".join(f"\n    {k.removeprefix('y_score_') + ' only':<{w}}  {pooled_auc(pred.assign(y_score=pred[k])):.3f} (pooled auc)" for k in parts), flush=True)
+                  + "".join(f"\n    {k.removeprefix('y_score_') + ' only':<{w}}  {pooled_auc(pred.assign(y_score=pred[k])):.3f} (pooled auc)" for k in parts)
+                  + (f"\n    tuned settings per fold -> {dest / 'tuning.csv'}" if tuned else ""), flush=True)
             results[(d, o)] = {"folds": folds, "frequency": freq, "subjects": list(X.index), "labels": y, "metrics": metrics, "predictions": pred, "summary": summary}
         table = pd.DataFrame([{"duration": d, "overlap": o, **r["summary"]} for (d, o), r in results.items()])
         if results:

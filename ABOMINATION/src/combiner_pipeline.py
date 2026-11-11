@@ -24,6 +24,7 @@ class Ensemble(PipelineStep):
     def output(self, X: pd.DataFrame, y: np.ndarray, X_test: pd.DataFrame, y_test: np.ndarray, side: dict[str, pd.DataFrame], steps: list[type[PipelineStep]], fold: str = "", **kwargs: Any) -> Layer: # side: extra model name -> its inputs (side_inputs); steps: the EEG mini-pipeline
         opts, quiet = self.opts, copy.deepcopy(self.config)
         quiet["p5_selection"]["debug"] = quiet["p6_model"]["debug"] = False # inner folds stay silent
+        quiet["p6_model"].setdefault("tuning", {})["enabled"] = False # tune only on the final refit (no third level of nesting)
         def eeg(a: pd.Index, b: pd.Index, cfg: dict, name: str) -> Layer: # EEG mini-pipeline fitted on cases a, scoring cases b
             layer = {**kwargs, "X": X_all.loc[a], "y": y_all[a].to_numpy(), "X_test": X_all.loc[b], "y_test": y_all[b].to_numpy(), "fold": name}
             for step in steps:

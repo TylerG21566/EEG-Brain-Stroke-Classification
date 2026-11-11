@@ -165,7 +165,8 @@ CONFIG = {
         "model": ModelName.XGBOOST,  # ModelName.XGBOOST; its hyperparameters are the sub-dict of the same name below
         "threshold": 0.5,  # P(stroke) >= threshold -> 1
         "debug": False,  # True: print each fold's train/test sizes and test scores
-        "xgboost": {  # fixed hyperparameters (no tuning), Tamim §4.7.1 Table 4.3
+        "xgboost": {  # fixed hyperparameters, Tamim §4.7.1 Table 4.3 (the "tuning" block below can search some of them per fold)
+            "booster": "gbtree",  # "gbtree" | "gblinear" (gblinear ignores the tree settings)
             "n_estimators": 60,  # boosting rounds
             "max_depth": 2,  # depth of each tree
             "learning_rate": 0.04,  # shrinkage per round
@@ -178,6 +179,22 @@ CONFIG = {
             "scale_pos_weight": "auto",  # "auto" = neg/pos of each fold's training subjects; or a number
             "seed": 0,  # random_state
             "n_jobs": -1,  # threads (all cores)
+        },
+        "tuning": {  # nested random search per p7 fold, on its training cases only (data/GOAT/DOCS/Tuning/PLAN.md); best settings refit on the whole fold
+            "enabled": False,  # False: the fixed settings above
+            "trials": 40,  # sampled settings per fold (trial 0 = the fixed settings above)
+            "inner_folds": 3,  # patient-grouped inner CV scoring each trial by mean AUC
+            "seed": 0,  # sampling + inner split seed
+            "space": {  # list = choice; (low, high, scale) with scale "log" | "linear" | "log_int"; ranges from Probst et al. 2019 Table 3
+                "booster": ["gbtree", "gblinear"],  # gblinear ignores the tree settings
+                "learning_rate": (0.005, 0.3, "log"),  # eta
+                "n_estimators": (50, 1000, "log_int"),  # nrounds
+                "subsample": (0.5, 1.0, "linear"),  # gbtree only
+                "reg_lambda": (0.01, 30.0, "log"),  # lambda
+                "reg_alpha": (0.001, 10.0, "log"),  # alpha
+                "min_child_weight": (1.0, 8.0, "log"),  # gbtree only
+            },
+            "debug": False,  # True: print each fold's best settings and inner AUC
         },
     },
     "demographic_model": {  # second architecture: logistic regression on patient details (TUH only); missing values -> training medians
