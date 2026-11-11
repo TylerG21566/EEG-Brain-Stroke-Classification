@@ -9,8 +9,12 @@ class Model(Protocol): # what p6 expects from every model family; one folder per
     def score(self, X: pd.DataFrame) -> np.ndarray: ... # P(class 1), shape (n,); X must have the training columns
 
 from components.models.xgb import XGBoostModel
+from components.models.logreg import LogRegModel
+from components.models.svm import SVMModel
+from components.models.forest import RandomForestModel
+from components.models.lda import LDAModel
 
-MODELS: dict[str, type[Model]] = {"xgboost": XGBoostModel} # model name in the config -> class
+MODELS: dict[str, type[Model]] = {"xgboost": XGBoostModel, "logreg": LogRegModel, "svm": SVMModel, "forest": RandomForestModel, "lda": LDAModel} # model name in the config -> class
 
 def build(name: str, opts: Opts) -> Model: # fresh, unfitted model by name
     if name not in MODELS:

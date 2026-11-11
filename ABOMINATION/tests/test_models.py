@@ -17,7 +17,7 @@ def data(n_neg=30, n_pos=10, seed=0):  # q90_F4_kurtosis separates the classes, 
 
 def test_build_by_name_and_unknown():
     assert isinstance(build("xgboost", OPTS), XGBoostModel) and MODELS["xgboost"] is XGBoostModel
-    with pytest.raises(ValueError, match="available: \\['xgboost'\\]"):
+    with pytest.raises(ValueError, match="available: \\['forest', 'lda', 'logreg', 'svm', 'xgboost'\\]"):
         build("rnn", {})
 
 
@@ -57,3 +57,12 @@ def test_deterministic_with_seed():
     X, y = data()
     a, b = (build("xgboost", OPTS).fit(X, y).score(X) for _ in range(2))
     np.testing.assert_array_equal(a, b)
+
+
+@pytest.mark.parametrize("name", sorted(MODELS))
+def test_every_model_from_config(name):  # p0 defaults build, tolerate NaNs and separate the classes
+    from components.p0_pipeline_config import CONFIG
+    X, y = data()
+    X.iloc[::4, 2] = np.nan
+    s = build(name, {**CONFIG["p6_model"][name], "n_jobs": 1} if "n_jobs" in CONFIG["p6_model"][name] else CONFIG["p6_model"][name]).fit(X, y).score(X)
+    assert s.shape == (len(y),) and ((s >= 0) & (s <= 1)).all() and roc_auc_score(y, s) > 0.9

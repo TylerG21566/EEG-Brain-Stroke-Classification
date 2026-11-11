@@ -25,6 +25,10 @@ class Selector(StrEnum): # p5 feature scoring
 
 class ModelName(StrEnum): # p6 classifier; add RNN etc. here as new folders in components/models/
     XGBOOST = "xgboost"  # gradient-boosted trees (Tamim §4.7.1)
+    LOGREG = "logreg"  # logistic regression (L2 / L1 / elastic net)
+    SVM = "svm"  # support vector machine, RBF kernel
+    FOREST = "forest"  # random forest
+    LDA = "lda"  # linear discriminant analysis with shrinkage
     
 OVERLAP_PERCENTAGES = [50] # between 0 and 90 only please
 EPOCH_SIZES = [3] # 1-10 seconds only please
@@ -162,7 +166,7 @@ CONFIG = {
         "debug": True,  # True: print each fold's chosen features
     },
     "p6_model": {  # runs inside p7 after p5, on each fold's chosen features; fitted on training subjects only, scores the test subjects
-        "model": ModelName.XGBOOST,  # ModelName.XGBOOST; its hyperparameters are the sub-dict of the same name below
+        "model": ModelName.XGBOOST,  # ModelName.XGBOOST | LOGREG | SVM | FOREST | LDA; its hyperparameters are the sub-dict of the same name below
         "threshold": 0.5,  # P(stroke) >= threshold -> 1
         "debug": False,  # True: print each fold's train/test sizes and test scores
         "xgboost": {  # fixed hyperparameters, Tamim §4.7.1 Table 4.3 (the "tuning" block below can search some of them per fold)
@@ -180,7 +184,35 @@ CONFIG = {
             "seed": 0,  # random_state
             "n_jobs": -1,  # threads (all cores)
         },
-        "tuning": {  # nested random search per p7 fold, on its training cases only (data/GOAT/DOCS/Tuning/PLAN.md); best settings refit on the whole fold
+        "logreg": {  # NaNs -> training medians, standardised (also svm, lda; forest skips scaling)
+            "C": 1.0,  # inverse regularisation; smaller = stronger
+            "l1_ratio": 0.0,  # 0 = L2, 1 = L1, between = elastic net
+            "class_weight": "balanced",  # reweight by inverse class frequency; None = off
+            "seed": 0,  # random_state
+            "max_iter": 1000,  # solver iterations
+        },
+        "svm": {  # P(stroke) from Platt scaling on an internal 5-fold CV
+            "C": 1.0,  # inverse regularisation; lower = smoother boundary
+            "kernel": "rbf",  # "rbf" | "linear" | "poly"
+            "gamma": "scale",  # RBF width; "scale" = 1 / (n_features * X.var())
+            "class_weight": "balanced",  # reweight by inverse class frequency; None = off
+            "seed": 0,  # random_state
+        },
+        "forest": {
+            "n_estimators": 300,  # trees
+            "max_depth": None,  # None = grow until leaves hit min_samples_leaf
+            "min_samples_leaf": 2,  # smallest leaf; higher = smoother
+            "max_features": "sqrt",  # features tried per split
+            "class_weight": "balanced",  # reweight by inverse class frequency; None = off
+            "seed": 0,  # random_state
+            "n_jobs": -1,  # threads (all cores)
+        },
+        "lda": {
+            "solver": "lsqr",  # "lsqr" | "eigen" (allow shrinkage) | "svd"
+            "shrinkage": "auto",  # Ledoit-Wolf covariance shrinkage, or a float 0-1
+            "balanced": True,  # True: priors [0.5, 0.5] (like class_weight="balanced"); False: training class frequencies
+        },
+        "tuning": {  # nested random search (xgboost only) per p7 fold, on its training cases only (data/GOAT/DOCS/Tuning/PLAN.md); best settings refit on the whole fold
             "enabled": False,  # False: the fixed settings above
             "trials": 40,  # sampled settings per fold (trial 0 = the fixed settings above)
             "inner_folds": 3,  # patient-grouped inner CV scoring each trial by mean AUC
