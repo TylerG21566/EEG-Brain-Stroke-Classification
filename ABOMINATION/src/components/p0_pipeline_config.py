@@ -260,4 +260,42 @@ CONFIG = {
         },
         "debug": False,  # True: print each subject table's shape and label counts
     },
+    "p7_cnn": {  # CNNs on raw epochs from p2's .npz (no p3/p4), in p7_loader's folds (same folds / repeats / seed / negative / metrics) so results pair with the feature models
+        "nets": ["eegnet", "shallow"],  # trained and scored in turn on every fold; kwargs in the sub-dict of the same name below
+        "p2_dir": None,  # None = p2_sample_processing out_dirs[dataset]; or a folder of <subject_id>.npz (e.g. "out/p2/TUH_capped")
+        "duration": 3,  # epoch length (s)
+        "overlap": 50,  # epoch overlap (%)
+        "decimate": 2,  # keep every 2nd sample: 250 -> 125 Hz (safe after p2's 30 Hz low-pass)
+        "per_subject": 120,  # epochs kept per subject, evenly spaced across the recording
+        "clip": 20.0,  # clip z-scored epochs at ±clip SD (as p3)
+        "val_folds": 5,  # inner validation = 1 of this many patient-grouped folds of each training split (early stopping)
+        "batch_size": 64,  # epochs per optimiser step
+        "lr": 1e-3,  # Adam learning rate
+        "max_epochs": 30,  # passes over the training epochs at most
+        "patience": 5,  # stop after this many passes without a better validation AUC (best weights restored)
+        "threshold": 0.5,  # mean epoch P(stroke) >= threshold -> 1
+        "device": "auto",  # "auto" = MPS when available, else CPU; or "cpu" | "mps" | "cuda"
+        "seed": 0,  # torch init + batch shuffle + inner split seed (repeat r uses seed + r)
+        "eegnet": {  # EEGNet-8,2 (Lawhern et al. 2018); kernel lengths in s, so they scale with sfreq
+            "F1": 8,  # temporal filters
+            "D": 2,  # spatial filters per temporal filter
+            "F2": 16,  # pointwise filters (F1 * D)
+            "kernel_s": 0.5,  # temporal kernel (half the sampling rate in the paper)
+            "sep_kernel_s": 0.125,  # separable conv kernel
+            "dropout": 0.25,  # paper's cross-subject value
+        },
+        "shallow": {  # ShallowConvNet (Schirrmeister et al. 2017): temporal -> spatial conv, square, mean pool, log (FBCSP-like band power)
+            "n_filters": 40,  # temporal and spatial filters
+            "kernel_s": 0.1,  # temporal kernel (25 samples at 250 Hz)
+            "pool_s": 0.3,  # mean-pool window (75 at 250 Hz)
+            "pool_stride_s": 0.06,  # pool stride (15 at 250 Hz)
+            "dropout": 0.5,
+        },
+        "out_dirs": {  # <out_dir>/<net>/<duration>s/<overlap>pct/metrics.csv + predictions.csv, <out_dir>/<net>/summary.csv
+            Dataset.ARCHIVE: "out/p7_cnn/Archive",
+            Dataset.FIGSHARE: "out/p7_cnn/FIgshare",
+            Dataset.TUH: "out/p7_cnn/TUH",
+        },
+        "debug": False,  # True: print each fold's train/val/test subject and epoch counts
+    },
 }

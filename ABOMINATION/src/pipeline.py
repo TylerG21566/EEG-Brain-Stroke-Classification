@@ -8,6 +8,7 @@ from components.p2_sample_processing import SampleProcessing
 from components.p3_epoching import Epoching
 from components.p4_features import Features
 from components.p7_loader import Loader
+from components.p7_cnn import CNNLoader
 
 class SanityStep(PipelineStep):
     def output(self, **kwargs: Any) -> Layer:
@@ -34,15 +35,18 @@ Registered_pipelines: dict[int, list[PipelineStep]] = {
     3: [Epoching(config)], # lazy: hands p4 one task per subject
     4: [Features(config)], # each task runs every (duration, overlap) in config["p3_epoching"]["combinations"]
     7: [Loader(config)], # reads p4's CSVs from disk; runs p5 Select (-> p6 Model) inside each CV fold, so 5 and 6 are not stages of their own
+    8: [CNNLoader(config)], # reads p2's .npz from disk; CNNs on raw epochs in the same folds as p7
 }
-STARTABLE = {0, 7} # stages a run may start from: 0, or 7 (loads p4's CSVs, skipping preprocessing). Others need earlier outputs in memory
+DEFAULT_END = 7 # stage 8 (CNNs, slow) only runs when asked: -s 8 or -e 8
+STARTABLE = {0, 7, 8} # stages a run may start from: 0, 7 (loads p4's CSVs, skipping preprocessing) or 8 (loads p2's .npz). Others need earlier outputs in memory
 
 def stage_range(argv: list[str] | None = None) -> tuple[int, int]: # parse and check --start / --end -> (start, end)
     last = max(Registered_pipelines)
     ap = argparse.ArgumentParser(description="Run pipeline stages start..end (inclusive).")
     ap.add_argument("-s", "--start", type=int, default=0, help=f"first stage, one of {sorted(STARTABLE)} (default 0)")
-    ap.add_argument("-e", "--end", type=int, default=last, help=f"last stage, 0-{last} (default {last})")
+    ap.add_argument("-e", "--end", type=int, default=None, help=f"last stage, 0-{last} (default {DEFAULT_END}, or --start if later)")
     a = ap.parse_args(argv)
+    a.end = max(a.start, DEFAULT_END) if a.end is None else a.end
     if a.end not in Registered_pipelines:
         ap.error(f"--end {a.end} is not a stage; stages are {sorted(Registered_pipelines)}")
     if a.start not in STARTABLE:
@@ -57,7 +61,7 @@ def main(argv: list[str] | None = None) -> None:
     t0 = time.perf_counter()
     print(f"[pipeline] stages {start}-{end}", flush=True)
     for n in sorted(k for k in Registered_pipelines if start <= k <= end):
-        if n in STARTABLE: # entry points (0, 7) never receive earlier stages' outputs, so 5-7 are decoupled from preprocessing
+        if n in STARTABLE: # entry points (0, 7, 8) never receive earlier stages' outputs, so 5-7 are decoupled from preprocessing
             layer = {}
         for step in Registered_pipelines[n]:
             t = time.perf_counter()
