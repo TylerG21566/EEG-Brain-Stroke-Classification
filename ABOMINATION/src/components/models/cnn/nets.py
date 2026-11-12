@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-# Raw-epoch CNNs: (batch, n_chans, n_times) float32 -> one logit per epoch, shape (batch,).
+# Raw-epoch nets (CNNs + ChronoNet RNN): (batch, n_chans, n_times) float32 -> one logit per epoch, shape (batch,).
 # Kernel / pool lengths are given in seconds and turned into samples with sfreq, so the nets adapt to 125 or 250 Hz.
 # Max-norm (EEGNet) is a post-step projection: the trainer calls net.constrain() after every optimiser.step(); no-op elsewhere.
 
@@ -72,7 +72,42 @@ class ShallowConvNet(nn.Module): # Schirrmeister et al. 2017 (Fig. 2): learnable
     def constrain(self) -> None: # no weight constraints in the paper
         pass
 
-NETS: dict[str, type[nn.Module]] = {"eegnet": EEGNet, "shallow": ShallowConvNet} # net name in the config -> class
+class SameConv1d(nn.Conv1d): # Keras 'same' for any stride: output length ceil(L / stride), padding worked out per input length (extra sample on the right)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        L, k, st = x.shape[-1], self.kernel_size[0], self.stride[0]
+        pad = max((-(-L // st) - 1) * st + k - L, 0)
+        return super().forward(nn.functional.pad(x, (pad // 2, pad - pad // 2)))
+
+class Inception1d(nn.Module): # parallel Conv1D branches of different kernel lengths, concatenated on channels
+    def __init__(self, c_in: int, n_filters: int, kernels: tuple[int, ...], stride: int = 2) -> None:
+        super().__init__()
+        self.branches = nn.ModuleList(SameConv1d(c_in, n_filters, k, stride=stride) for k in kernels)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.relu(torch.cat([b(x) for b in self.branches], dim=1)) # ReLU: activation not reported in the paper
+
+class ChronoNet(nn.Module): # Roy et al. 2019 (Fig. 2b): 3 inception Conv1D blocks (stride 2 each) -> 4 densely linked GRUs -> last step
+    def __init__(self, n_chans: int, n_times: int, sfreq: float, n_filters: int = 32, kernels: tuple[int, ...] = (2, 4, 8),
+                 hidden: int = 32, dropout: float = 0.0) -> None: # kernels in samples, as in the paper (n_times / sfreq unused: length-agnostic)
+        super().__init__()
+        c = n_filters * len(kernels) # 96 after concat
+        self.convs = nn.Sequential(*(Inception1d(n_chans if i == 0 else c, n_filters, tuple(kernels)) for i in range(3))) # 375 -> 188 -> 94 -> 47
+        self.grus = nn.ModuleList(nn.GRU(d, hidden, batch_first=True) for d in (c, hidden, 2 * hidden, 3 * hidden)) # GRU3 / GRU4 read concat of all earlier GRUs
+        self.drop = nn.Dropout(dropout) # paper reports none
+        self.dense = nn.Linear(hidden, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        h = self.convs(x).transpose(1, 2) # (batch, steps, c)
+        g1 = self.grus[0](h)[0]
+        g2 = self.grus[1](g1)[0]
+        g3 = self.grus[2](torch.cat([g1, g2], dim=2))[0]
+        g4 = self.grus[3](torch.cat([g1, g2, g3], dim=2))[0]
+        return self.dense(self.drop(g4[:, -1])).squeeze(1) # last time step only
+
+    def constrain(self) -> None: # no weight constraints in the paper
+        pass
+
+NETS: dict[str, type[nn.Module]] = {"eegnet": EEGNet, "shallow": ShallowConvNet, "chrono": ChronoNet} # net name in the config -> class
 
 def build_net(name: str, n_chans: int, n_times: int, sfreq: float, opts: dict) -> nn.Module: # fresh, untrained net; opts = constructor kwargs
     if name not in NETS:

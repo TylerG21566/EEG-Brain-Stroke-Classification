@@ -261,7 +261,7 @@ CONFIG = {
         "debug": False,  # True: print each subject table's shape and label counts
     },
     "p7_cnn": {  # CNNs on raw epochs from p2's .npz (no p3/p4), in p7_loader's folds (same folds / repeats / seed / negative / metrics) so results pair with the feature models
-        "nets": ["eegnet", "shallow"],  # trained and scored in turn on every fold; kwargs in the sub-dict of the same name below
+        "nets": ["eegnet", "shallow", "chrono"],  # trained and scored in turn on every fold; kwargs in the sub-dict of the same name below
         "p2_dir": None,  # None = p2_sample_processing out_dirs[dataset]; or a folder of <subject_id>.npz (e.g. "out/p2/TUH_capped")
         "duration": 3,  # epoch length (s)
         "overlap": 50,  # epoch overlap (%)
@@ -290,6 +290,12 @@ CONFIG = {
             "pool_s": 0.3,  # mean-pool window (75 at 250 Hz)
             "pool_stride_s": 0.06,  # pool stride (15 at 250 Hz)
             "dropout": 0.5,
+        },
+        "chrono": {  # ChronoNet (Roy et al. 2019): 3 inception Conv1D blocks (stride 2) -> 4 densely linked GRUs -> last step
+            "n_filters": 32,  # filters per inception branch (96 after concat)
+            "kernels": (2, 4, 8),  # branch kernel lengths (samples, exponential spacing)
+            "hidden": 32,  # units per GRU layer
+            "dropout": 0.0,  # before the output layer; none reported in the paper
         },
         "out_dirs": {  # <out_dir>/<net>/<duration>s/<overlap>pct/metrics.csv + predictions.csv, <out_dir>/<net>/summary.csv
             Dataset.ARCHIVE: "out/p7_cnn/Archive",

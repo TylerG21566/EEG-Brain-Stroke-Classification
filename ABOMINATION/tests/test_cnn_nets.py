@@ -2,7 +2,7 @@ import pytest, torch
 from components.models.cnn import NETS, build_net
 
 SHAPES = [(19, 375, 125.0), (19, 750, 250.0)] # 3 s epochs at 125 / 250 Hz
-BALLPARK = {"eegnet": (1_000, 3_000), "shallow": (10_000, 100_000)}
+BALLPARK = {"eegnet": (1_000, 3_000), "shallow": (10_000, 100_000), "chrono": (130_000, 140_000)} # chrono ~135.6k at 19 ch (Roy et al. notes)
 
 
 def n_params(net):
@@ -59,3 +59,16 @@ def test_deterministic(name):
         torch.manual_seed(0)
         outs.append(build_net(name, 19, 375, 125.0, {}).eval()(x))
     assert torch.equal(*outs)
+
+
+@pytest.mark.parametrize("t,lens", [(375, [188, 94, 47]), (750, [375, 188, 94])])
+def test_chrono_seq_lens_and_constrain_noop(t, lens):
+    net = build_net("chrono", 19, t, 125.0, {})
+    h, out = torch.randn(2, 19, t), []
+    for block in net.convs:
+        h = block(h)
+        out.append(h.shape[1:])
+    assert out == [(96, n) for n in lens]
+    before = [p.clone() for p in net.parameters()]
+    net.constrain()
+    assert all(torch.equal(a, b) for a, b in zip(before, net.parameters()))
