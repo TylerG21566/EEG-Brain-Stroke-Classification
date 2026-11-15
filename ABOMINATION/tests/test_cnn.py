@@ -2,6 +2,7 @@ import numpy as np, pandas as pd, pytest, torch
 from sklearn.model_selection import StratifiedGroupKFold
 import components.p0_pipeline_config as p0
 import components.p7_cnn as p7c
+from combiner_pipeline import inner_splits
 from components.base import combo_dir, groups
 from components.models.cnn.data import load_epochs
 from components.models.cnn.train import subject_scores
@@ -87,3 +88,31 @@ def test_cnn_loader_is_deterministic(ccfg):
     a = p7c.CNNLoader(ccfg).output()["cnn"]["a"]["predictions"]
     b = p7c.CNNLoader(ccfg).output()["cnn"]["a"]["predictions"]
     pd.testing.assert_frame_equal(a, b)
+
+
+def test_cnn_loader_with_combiner_writes_every_score(ccfg, tmp_path, monkeypatch):
+    seen = []
+    fit = p7c.fit_score
+    def spy(make, X, y, si, tr, va, te, *a):  # record every train/val/test subject set (outer and inner)
+        seen.append([set(np.unique(si[e])) for e in (tr, va, te)])
+        return fit(make, X, y, si, tr, va, te, *a)
+    monkeypatch.setattr(p7c, "fit_score", spy)
+    sids = sorted(SIDS)
+    y = labels(sids, ["normal"])
+    age = pd.DataFrame({"age": 40 + 25 * y + np.random.default_rng(0).standard_normal(len(sids)), "sex": 1.0}, index=sids)  # fake demographics: age tracks the label
+    monkeypatch.setattr(p7c, "side_inputs", lambda cfg: {"demographic": age})
+    ccfg["combiner"].update(enabled=True, inner_folds=2, models=["demographic"], debug=True)
+    ccfg["p7_cnn"]["nets"] = ["a"]
+    res = p7c.CNNLoader(ccfg).output()
+    g = groups(sids)
+    assert len(seen) == 2 * (1 + 2)  # 2 outer folds × (outer fit + 2 inner fits)
+    for tr, va, te in seen:
+        pt, pv, pe = ({g[i] for i in s} for s in (tr, va, te))
+        assert not (pt & pv or pt & pe or pv & pe)
+    for k, (train, test) in enumerate(StratifiedGroupKFold(2, shuffle=True, random_state=0).split(sids, y, g)):  # outer fit, then Ensemble's inner splits of its training subjects
+        outer, inner = seen[3 * k], seen[3 * k + 1:3 * k + 3]
+        assert outer[2] == set(test) and outer[0] | outer[1] == set(train)
+        assert [(tr | va, te) for tr, va, te in inner] == [(set(train[a]), set(train[b])) for a, b in inner_splits(ccfg, np.asarray(sids)[train], y[train])]
+    p = pd.read_csv(combo_dir(tmp_path / "cnn" / "a", 1, 50) / "predictions.csv")
+    assert {"y_score", "y_score_eeg", "y_score_demographic"} <= set(p.columns) and sorted(p["subject_id"]) == sids
+    assert p[["y_score", "y_score_eeg", "y_score_demographic"]].stack().between(0, 1).all() and "pooled_auc" in res["cnn"]["a"]["summary"]

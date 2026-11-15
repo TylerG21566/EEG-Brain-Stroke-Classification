@@ -10,7 +10,9 @@ from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold
 from components.base import Layer, PipelineStep, combo_dir, groups, resolve
 from components.models.cnn.data import load_epochs
 from components.models.cnn.train import fit_score, subject_scores
-from components.p7_loader import METRICS, auc, fold_metrics, labels, pm, summarise
+from components.p7_loader import METRICS, auc, fold_metrics, labels, pm, pooled_auc, summarise
+from combiner_components.model import CombinerModel
+from combiner_pipeline import extra_scores, inner_splits, side_inputs
 
 NET_FACTORY: Callable[..., torch.nn.Module] | None = None # tests: stand-in for build_net(name, n_chans, n_times, sfreq, opts)
 
@@ -46,29 +48,50 @@ class CNNLoader(PipelineStep): # p7 for CNNs: reads p2's .npz from disk, trains 
         if len(set(y)) < 2 or min(Counter(dict(zip(g, y.tolist())).values()).values()) < p7o["folds"]: # counts patients, as in p7
             print(f"[p7_cnn] skipped (need both classes with at least {p7o['folds']} subjects each)", flush=True)
             return {**kwargs, "cnn": {}}
+        cc = self.config.get("combiner", {})
+        ensemble = cc.get("enabled", False)
+        side = side_inputs(self.config) if ensemble else {} # extra models' inputs, loaded once
+        models, ids = ["eeg", *side], np.asarray(sids)
+        def plan(tr: np.ndarray, te: np.ndarray) -> tuple[np.ndarray, np.ndarray, list[np.ndarray]]: # subjects tr -> patient-grouped early-stopping split (fit, val) + epoch indices of fit / val / te
+            f, v = next(StratifiedGroupKFold(opts["val_folds"], shuffle=True, random_state=opts["seed"] + r).split(tr, y[tr], g[tr]))
+            fit, val = tr[f], tr[v]
+            assert not (set(g[fit]) & set(g[val]) or set(g[fit]) & set(g[te]) or set(g[val]) & set(g[te])), "patient in more than one of train/val/test"
+            return fit, val, [np.flatnonzero(np.isin(si, s)) for s in (fit, val, te)]
+        def run(n: str, ep: list[np.ndarray], te: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]: # net n trained on ep's fit epochs (early-stopped on val) -> mean epoch P(stroke) per te subject, in te order
+            prob, info = fit_score(lambda: build(n, X.shape[1], X.shape[2], sfreq, opts.get(n, {})), X, y_ep, si, *ep, opts, dev, opts["seed"] + r)
+            return subject_scores(prob, si[ep[2]]).reindex(te).to_numpy(), info
         # 2. p7's folds (same kind, seed and split call), each with an inner patient-grouped validation split for early stopping
         rows, preds = {n: [] for n in opts["nets"]}, {n: [] for n in opts["nets"]}
         for r in range(p7o["repeats"]):
             kind = StratifiedGroupKFold if len(set(g)) < len(g) else StratifiedKFold # several sessions per patient -> keep them in one fold
             cv = kind(p7o["folds"], shuffle=True, random_state=p7o["seed"] + r)
             for i, (train, test) in enumerate(cv.split(sids, y, g) if kind is StratifiedGroupKFold else cv.split(sids, y)):
-                fit, val = next(StratifiedGroupKFold(opts["val_folds"], shuffle=True, random_state=opts["seed"] + r).split(train, y[train], g[train]))
-                fit, val = train[fit], train[val]
-                assert not (set(g[fit]) & set(g[val]) or set(g[fit]) & set(g[test]) or set(g[val]) & set(g[test])), "patient in more than one of train/val/test"
-                ep = [np.flatnonzero(np.isin(si, s)) for s in (fit, val, test)] # epoch indices of each subject set
+                fit, val, ep = plan(train, test)
+                splits = inner_splits(self.config, ids[train], y[train]) if ensemble else [] # Ensemble's inner CV (positions within train)
+                inner = [plan(train[a], train[b])[2] for a, b in splits] # each inner split's own early-stopping split
+                oof = np.zeros((len(train), len(models))) # out-of-fold scores: column 0 = the net (filled per net), then each extra model
+                for a, b in splits:
+                    oof[b, 1:] = np.reshape(extra_scores(self.config, side, ids[train[a]], y[train[a]], ids[train[b]]), (len(side), len(b))).T
+                s_side = np.reshape(extra_scores(self.config, side, ids[train], y[train], ids[test]), (len(side), len(test))).T # extra models refit on all training subjects
                 if opts["debug"]:
                     print(f"[p7_cnn] repeat {r + 1} fold {i + 1}: subjects train/val/test {len(fit)}/{len(val)}/{len(test)}, epochs {'/'.join(str(len(e)) for e in ep)}", flush=True)
                 for n in opts["nets"]:
                     t = time.perf_counter()
-                    make = lambda: build(n, X.shape[1], X.shape[2], sfreq, opts.get(n, {}))
-                    prob, info = fit_score(make, X, y_ep, si, *ep, opts, dev, opts["seed"] + r)
-                    score = subject_scores(prob, si[ep[2]]).reindex(test).to_numpy() # mean epoch P(stroke) per test subject, in test order
-                    pred = (score >= opts["threshold"]).astype(int)
+                    score, info = run(n, ep, test) # mean epoch P(stroke) per test subject, in test order
+                    parts = {}
+                    if ensemble: # the net + extra models -> combiner fitted on the inner CV's out-of-fold scores
+                        for (a, b), e in zip(splits, inner):
+                            oof[b, 0] = run(n, e, train[b])[0]
+                        comb, s = CombinerModel(cc).fit(oof, y[train]), np.column_stack([score, s_side])
+                        score, parts = comb.score(s), {f"y_score_{k}": s[:, j] for j, k in enumerate(models)}
+                        if cc["debug"]:
+                            print(f"[combiner] {n} | repeat {r + 1} fold {i + 1} | weights " + ", ".join(f"{k} {w:+.2f}" for k, w in zip(models, comb.weights)), flush=True)
+                    pred = (score >= (cc["threshold"] if ensemble else opts["threshold"])).astype(int)
                     m = fold_metrics(y[test], score, pred, names)
                     rows[n].append({"repeat": r, "fold": i, "n_train": len(train), "n_test": len(test), **m})
-                    preds[n].append(pd.DataFrame({"subject_id": np.asarray(sids)[test], "repeat": r, "fold": i, "y_true": y[test], "y_score": score, "y_pred": pred}))
+                    preds[n].append(pd.DataFrame({"subject_id": np.asarray(sids)[test], "repeat": r, "fold": i, "y_true": y[test], "y_score": score, "y_pred": pred, **parts}))
                     print(f"[p7_cnn] {n} | repeat {r + 1}/{p7o['repeats']} fold {i + 1}/{p7o['folds']} | val auc {info['val_auc']:.3f} (pass {info['best_pass']}/{info['passes']}) "
-                          f"| test auc {auc(y[test], score):.3f} | {time.perf_counter() - t:.0f} s", flush=True)
+                          f"| test auc {auc(y[test], score):.3f}" + (f" (eeg {auc(y[test], parts['y_score_eeg']):.3f})" if ensemble else "") + f" | {time.perf_counter() - t:.0f} s", flush=True)
         # 3. per net: p7's CSV layout + summary
         results, w = {}, max(map(len, names + ["pooled auc"]))
         for n in opts["nets"]:
@@ -80,6 +103,7 @@ class CNNLoader(PipelineStep): # p7 for CNNs: reads p2's .npz from disk, trains 
             pred.to_csv(dest / "predictions.csv", index=False)
             pd.DataFrame([{"duration": d, "overlap": o, **summary}]).to_csv(out / n / "summary.csv", index=False)
             print(f"\n[p7_cnn] {n} | {d:g} s / {o:g}% | test metrics, mean ± SD over {len(metrics)} folds\n" + "\n".join(f"    {m:<{w}}  {pm(summary, m)}" for m in names)
-                  + f"\n    {'pooled auc':<{w}}  {summary['pooled_auc']:.3f} (out-of-fold, mean over {p7o['repeats']} repeats) -> {dest}", flush=True)
+                  + f"\n    {'pooled auc':<{w}}  {summary['pooled_auc']:.3f} (out-of-fold, mean over {p7o['repeats']} repeats) -> {dest}"
+                  + "".join(f"\n    {k + ' only':<{w}}  {pooled_auc(pred.assign(y_score=pred[f'y_score_{k}'])):.3f} (pooled auc)" for k in models if ensemble), flush=True)
             results[n] = {"metrics": metrics, "predictions": pred, "summary": summary}
         return {**kwargs, "cnn": results}
