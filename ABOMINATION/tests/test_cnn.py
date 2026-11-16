@@ -38,7 +38,7 @@ def ccfg(cfg, tmp_path, monkeypatch):  # TUH, 2 folds × 1 repeat, tiny CPU nets
     cfg["p1_data_formatting"]["dataset"] = p0.Dataset.TUH
     cfg["p7_loader"].update(folds=2, repeats=1, seed=0, metrics=NAMES)
     cfg["p7_cnn"].update(nets=["a", "b"], p2_dir=str(tmp_path / "npz"), duration=1, overlap=50, decimate=2, per_subject=10, val_folds=2, batch_size=16,
-                         max_epochs=2, patience=5, device="cpu", out_dirs={p0.Dataset.TUH: str(tmp_path / "cnn")})
+                         max_epochs=2, patience=5, device="cpu", busy=1.0, out_dirs={p0.Dataset.TUH: str(tmp_path / "cnn")})
     monkeypatch.setattr(p7c, "NET_FACTORY", lambda name, n_chans, n_times, sfreq, opts: Tiny(n_chans, n_times))
     return cfg
 
@@ -116,3 +116,97 @@ def test_cnn_loader_with_combiner_writes_every_score(ccfg, tmp_path, monkeypatch
     p = pd.read_csv(combo_dir(tmp_path / "cnn" / "a", 1, 50) / "predictions.csv")
     assert {"y_score", "y_score_eeg", "y_score_demographic"} <= set(p.columns) and sorted(p["subject_id"]) == sids
     assert p[["y_score", "y_score_eeg", "y_score_demographic"]].stack().between(0, 1).all() and "pooled_auc" in res["cnn"]["a"]["summary"]
+
+
+def test_staged_search_sweeps_lr_then_samples_at_best_lr():
+    from components.tuning import staged
+    t = {"lr_grid": [1e-4, 1e-3, 1e-2], "trials": 3}
+    space = {"width": (2, 8, "log_int")}
+    seen = []
+    def score(s):  # best lr is 1e-2; wider is better
+        seen.append(dict(s))
+        return {"val_auc": 0.5 + (s["lr"] == 1e-2) * 0.2 + s["width"] / 100}
+    best, table = staged(score, {"lr": 1e-3, "width": 4}, t, space, np.random.default_rng(0))
+    assert seen[0] == {"lr": 1e-3, "width": 4}  # trial 0 = the defaults
+    assert [s["lr"] for s in seen[:3]] == [1e-3, 1e-4, 1e-2] and all(s["width"] == 4 for s in seen[:3])  # stage 1: lr only, default lr not repeated
+    assert len(seen) == 6 and all(s["lr"] == 1e-2 and 2 <= s["width"] <= 8 for s in seen[3:])  # stage 2: best lr fixed, width sampled
+    assert table["stage"].tolist() == [1, 1, 1, 2, 2, 2] and best == seen[int(table["val_auc"].idxmax())]
+    flat = staged(lambda s: {"val_auc": 0.7}, {"lr": 1e-3, "width": 4}, t, space, np.random.default_rng(0))[0]
+    assert flat == {"lr": 1e-3, "width": 4}  # ties never replace the defaults
+    nan = staged(lambda s: {"val_auc": np.nan if s["lr"] != 1e-3 else 0.6}, {"lr": 1e-3, "width": 4}, t, {}, np.random.default_rng(0))
+    assert nan[0]["lr"] == 1e-3 and len(nan[1]) == 3  # NaN never wins; empty space -> stage 1 only
+
+
+def test_cnn_tuning_is_nested_logged_and_reused_by_combiner(ccfg, tmp_path, monkeypatch):
+    seen = []
+    fit = p7c.fit_score
+    def spy(make, X, y, si, tr, va, te, o, *a):  # every fit: subjects seen, lr and epoch budget used
+        seen.append({"sets": [set(np.unique(si[e])) for e in (tr, va, te)], "lr": o["lr"], "max_epochs": o["max_epochs"], "tuning": len(te) == 0})
+        return fit(make, X, y, si, tr, va, te, o, *a)
+    monkeypatch.setattr(p7c, "fit_score", spy)
+    sids = sorted(SIDS)
+    y = labels(sids, ["normal"])
+    age = pd.DataFrame({"age": 40 + 25 * y + np.random.default_rng(0).standard_normal(len(sids)), "sex": 1.0}, index=sids)
+    monkeypatch.setattr(p7c, "side_inputs", lambda cfg: {"demographic": age})
+    ccfg["combiner"].update(enabled=True, inner_folds=2, models=["demographic"])
+    ccfg["p7_cnn"].update(a={"width": 4}, max_epochs=2)
+    ccfg["p7_cnn"]["tuning"] = {"enabled": True, "lr_grid": [1e-3, 1e-2], "trials": 2, "max_epochs": 1, "patience": 1, "seed": 0, "space": {"a": {"width": (2, 8, "log_int")}}}
+    res = p7c.CNNLoader(ccfg).output()
+    g = groups(sids)
+    folds = list(StratifiedGroupKFold(2, shuffle=True, random_state=0).split(sids, y, g))
+    tun = pd.read_csv(combo_dir(tmp_path / "cnn" / "a_tuned", 1, 50) / "tuning.csv")
+    trials = pd.read_csv(combo_dir(tmp_path / "cnn" / "a_tuned", 1, 50) / "tuning_trials.csv")
+    assert len(tun) == 2 and len(trials) == 2 * (2 + 2)  # per fold: 2 lr values + 2 random draws
+    assert {"lr", "width", "val_auc", "default_val_auc", "test_auc_eeg", "test_auc"} <= set(tun.columns)
+    per_fold = len(seen) // 2
+    assert per_fold == (4 + 1 + 2) + (1 + 2)  # a: 4 tuning fits, outer refit, 2 combiner inner refits; then b (untuned): outer + 2 inner
+    for k, (train, test) in enumerate(folds):
+        fits = seen[k * per_fold:k * per_fold + 7]
+        assert not any(f["tuning"] for f in seen[k * per_fold + 7:(k + 1) * per_fold])  # b never tuned
+        for f in fits[:4]:  # tuning: shortened, no test epochs, never a test subject
+            assert f["tuning"] and f["max_epochs"] == 1 and not (f["sets"][0] | f["sets"][1]) & set(test)
+        for f in fits[4:]:  # refits: full budget, the chosen lr
+            assert not f["tuning"] and f["max_epochs"] == 2 and f["lr"] == pytest.approx(tun["lr"].iloc[k])
+        assert fits[4]["sets"][2] == set(test)
+    assert not (tmp_path / "cnn" / "a").exists() and (tmp_path / "cnn" / "a_tuned" / "summary.csv").exists()  # untuned folder untouched
+    assert (tmp_path / "cnn" / "b").exists()  # nets without a space run untuned, as before
+    assert sorted(pd.read_csv(combo_dir(tmp_path / "cnn" / "a_tuned", 1, 50) / "predictions.csv")["subject_id"]) == sids and "pooled_auc" in res["cnn"]["a"]["summary"]
+
+
+def test_throttle_pauses_in_proportion_to_work(monkeypatch):
+    import time as _time
+    from components.models.cnn import train
+    slept = []
+    monkeypatch.setattr(train.time, "sleep", slept.append)
+    t0 = _time.perf_counter() - 0.2  # a batch that took 0.2 s
+    train.throttle("cpu", 1.0, t0)
+    assert slept == []  # full speed: no pause
+    train.throttle("cpu", 0.5, t0)
+    train.throttle("cpu", 0.25, t0)
+    assert slept[0] == pytest.approx(0.2, abs=0.05) and slept[1] == pytest.approx(0.6, abs=0.1)  # busy 50% -> pause = work; 25% -> 3x work
+
+
+def test_cnn_resume_reruns_only_missing_folds_and_matches_a_straight_run(ccfg, tmp_path, monkeypatch):
+    ccfg["p7_cnn"].update(nets=["a"], a={"width": 4})
+    ccfg["p7_cnn"]["tuning"] = {"enabled": True, "lr_grid": [1e-3, 1e-2], "trials": 1, "max_epochs": 1, "patience": 1, "seed": 0, "space": {"a": {"width": (2, 8, "log_int")}}}
+    dest = combo_dir(tmp_path / "cnn" / "a_tuned", 1, 50)
+    full = p7c.CNNLoader(ccfg).output()["cnn"]["a"]["predictions"]
+    logs = {f: pd.read_csv(dest / f) for f in ("tuning.csv", "tuning_trials.csv")}
+    for f in ("metrics.csv", "predictions.csv", "tuning.csv"):  # simulate a crash during fold 2: fold 1 finished, fold 2 half-tuned
+        t = pd.read_csv(dest / f)
+        t[t["fold"] == 0].to_csv(dest / f, index=False)
+    trials = logs["tuning_trials.csv"]
+    trials[(trials["fold"] == 0) | (trials["trial"] == 0)].to_csv(dest / "tuning_trials.csv", index=False)
+    seen = []
+    fit = p7c.fit_score
+    def spy(make, X, y, si, tr, va, te, *a):
+        seen.append(1)
+        return fit(make, X, y, si, tr, va, te, *a)
+    monkeypatch.setattr(p7c, "fit_score", spy)
+    ccfg["p7_cnn"]["resume"] = True
+    res = p7c.CNNLoader(ccfg).output()["cnn"]["a"]["predictions"]
+    assert len(seen) == 3 + 1  # only fold 2 reruns: 3 tuning fits + refit
+    pd.testing.assert_frame_equal(res, full, check_dtype=False)  # same as an uninterrupted run
+    for f, t in logs.items():  # logs: fold 1 kept once, fold 2's partial trials replaced, not duplicated
+        pd.testing.assert_frame_equal(pd.read_csv(dest / f).drop(columns=["seconds", "tuning_s"], errors="ignore"),
+                                      t.drop(columns=["seconds", "tuning_s"], errors="ignore"), check_dtype=False)

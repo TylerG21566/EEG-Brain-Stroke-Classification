@@ -1,5 +1,6 @@
-# Nested hyperparameter tuning for p6: random search scored by patient-grouped inner CV on one fold's training cases only.
-# p6 calls tune() before fitting when p6_model.tuning.enabled; the outer test cases never reach this module.
+# Nested hyperparameter tuning, on one outer fold's training cases only (the outer test cases never reach this module).
+# p6: tune() = random search scored by patient-grouped inner CV (p6_model.tuning). p7_cnn: staged() = lr sweep, then random search (p7_cnn.tuning).
+from collections.abc import Callable
 from typing import Any
 import numpy as np
 import pandas as pd
@@ -33,3 +34,22 @@ def tune(name: str, fixed: Opts, X: pd.DataFrame, y: np.ndarray, t: Opts) -> tup
     table = pd.DataFrame(rows)
     best = table["inner_auc"].idxmax()
     return {**fixed, **trials[best]}, float(table.loc[best, "inner_auc"]), table
+
+def staged(score: Callable[[Opts], dict[str, Any]], defaults: Opts, t: Opts, space: dict[str, Any], rng: np.random.Generator,
+           log: Callable[[dict[str, Any]], None] | None = None) -> tuple[Opts, pd.DataFrame]: # CNN search (data/GOAT/DOCS/Tuning/CNN) -> (best settings, every trial)
+    # Stage 1: sweep lr over t["lr_grid"] with everything else at its default (trial 0 = the defaults). Stage 2: best lr fixed, t["trials"] random draws of space.
+    # score(settings) -> {"val_auc": ..., ...}; settings = defaults' keys. Ties and NaN scores never beat an earlier trial, so the defaults win unless beaten.
+    rows: list[dict[str, Any]] = []
+    def trial(stage: int, s: Opts) -> None:
+        rows.append({"trial": len(rows), "stage": stage, **s, **score(s)})
+        if log:
+            log(rows[-1])
+    def best() -> dict[str, Any]:
+        vals = [r["val_auc"] for r in rows]
+        return rows[int(np.argmax([-np.inf if np.isnan(v) else v for v in vals]))] # argmax = first of equal maxima
+    for lr in [defaults["lr"]] + [float(v) for v in t["lr_grid"] if not np.isclose(v, defaults["lr"])]:
+        trial(1, {**defaults, "lr": float(lr)})
+    lr = best()["lr"]
+    for _ in range(t["trials"] if space else 0):
+        trial(2, {**defaults, **sample(space, rng), "lr": lr})
+    return {k: best()[k] for k in defaults}, pd.DataFrame(rows)

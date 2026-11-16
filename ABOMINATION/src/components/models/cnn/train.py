@@ -1,3 +1,4 @@
+import time
 from collections.abc import Callable
 from typing import Any
 import numpy as np
@@ -6,6 +7,15 @@ import torch
 from torch import nn
 from components.base import Opts
 from components.p7_loader import auc
+
+def throttle(device: str, busy: float, t0: float) -> None: # after a batch started at t0: wait so the device is busy only `busy` of the time (1 = full speed)
+    if busy >= 1:
+        return
+    if device == "mps": # GPU work is queued asynchronously; wait for it so the batch's real time is measured
+        torch.mps.synchronize()
+    elif device == "cuda":
+        torch.cuda.synchronize()
+    time.sleep((time.perf_counter() - t0) * (1 / busy - 1))
 
 def subject_scores(prob: np.ndarray, subj_index: np.ndarray) -> pd.Series: # mean epoch P(stroke) per subject, indexed by subject index
     return pd.Series(prob).groupby(np.asarray(subj_index)).mean()
@@ -31,11 +41,15 @@ def fit_score(make_net: Callable[[], nn.Module], X: np.ndarray, y_epoch: np.ndar
         net.train()
         order = train_idx[rng.permutation(len(train_idx))]
         for i in range(0, len(order), bs):
+            if i % (10 * bs) == 0: # throttle in blocks of 10 batches, so the GPU keeps its queue between pauses
+                t0 = time.perf_counter()
             b = order[i:i + bs]
             opt.zero_grad()
             loss_fn(net(torch.from_numpy(X[b]).to(device)), yt[b].to(device)).backward()
             opt.step()
             net.constrain() # max-norm etc.
+            if (i // bs) % 10 == 9 or i + bs >= len(order):
+                throttle(device, opts.get("busy", 1.0), t0) # cap the device's duty cycle (heat): p7_cnn.busy
         v = auc(y_val.to_numpy(), subject_scores(predict(net, X, val_idx, device, eval_bs), subj_index[val_idx]).to_numpy())
         if best_state is None or v > best: # NaN (one class in val) never beats a real AUC
             best, best_pass, bad = v, passes, 0

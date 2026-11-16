@@ -275,6 +275,8 @@ CONFIG = {
         "patience": 5,  # stop after this many passes without a better validation AUC (best weights restored)
         "threshold": 0.5,  # mean epoch P(stroke) >= threshold -> 1
         "device": "auto",  # "auto" = MPS when available, else CPU; or "cpu" | "mps" | "cuda"
+        "resume": False,  # True: reload folds already in <net>/<dur>s/<ov>pct/metrics.csv and run only the missing ones (e.g. after a crash). False: start fresh
+        "busy": 0.5,  # share of time the device trains (pauses after each batch): 0.5 = about half the GPU load and heat, twice the run time; 1.0 = full speed
         "seed": 0,  # torch init + batch shuffle + inner split seed (repeat r uses seed + r)
         "eegnet": {  # EEGNet-8,2 (Lawhern et al. 2018); kernel lengths in s, so they scale with sfreq
             "F1": 8,  # temporal filters
@@ -296,6 +298,18 @@ CONFIG = {
             "kernels": (2, 4, 8),  # branch kernel lengths (samples, exponential spacing)
             "hidden": 32,  # units per GRU layer
             "dropout": 0.0,  # before the output layer; none reported in the paper
+        },
+        "tuning": {  # nested search per p7 fold, on its training subjects only (data/GOAT/DOCS/Tuning/CNN/*.md); trials scored by the fold's early-stopping val AUC
+            "enabled": False,  # False: the fixed settings above. True: nets with a space below are tuned and written to <out_dir>/<net>_tuned/
+            "lr_grid": [1e-4, 3e-4, 1e-3, 3e-3, 1e-2],  # stage 1: lr sweep, other settings at their defaults (the current lr runs first = trial 0)
+            "trials": 5,  # stage 2: random draws of the net's space at stage 1's best lr
+            "max_epochs": 15,  # shortened training for tuning fits only; the refit uses max_epochs / patience above
+            "patience": 3,
+            "seed": 0,  # stage-2 sampling seed (per fold: seed, repeat, fold)
+            "space": {  # per net: list = choice; (low, high, scale) with scale "log" | "linear" | "log_int"; keys must be in the net's sub-dict above. Nets not listed run untuned
+                "shallow": {"n_filters": (20, 80, "log_int"), "kernel_s": (0.1, 0.5, "log")},  # Wang et al. 2024; kernel_s for delta (Schirrmeister notes)
+                "chrono": {"hidden": (16, 128, "log_int")},  # Greff et al. 2017
+            },
         },
         "out_dirs": {  # <out_dir>/<net>/<duration>s/<overlap>pct/metrics.csv + predictions.csv, <out_dir>/<net>/summary.csv
             Dataset.ARCHIVE: "out/p7_cnn/Archive",
